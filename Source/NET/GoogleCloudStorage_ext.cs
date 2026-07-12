@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using Google.Apis.Auth.OAuth2;
+using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Storage.v1;
 using Google.Apis.Storage.v1.Data;
 using Google.Cloud.Storage.V1;
@@ -27,7 +28,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssDestinationObjectName">The full path/name for the destination object.</param>
 		public void MssObject_Copy(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssSourceBucketName, string ssSourceObjectName, string ssDestinationBucketName, string ssDestinationObjectName) {
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
-			storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName);
+			try
+			{
+				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName);
+			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssSourceBucketName, ssSourceObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssObject_Copy
 
 		/// <summary>
@@ -42,8 +48,23 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssDestinationObjectName">The full path/name for the destination object.</param>
 		public void MssObject_Move(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssSourceBucketName, string ssSourceObjectName, string ssDestinationBucketName, string ssDestinationObjectName) {
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
-			storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName);
-			storageClient.DeleteObject(ssSourceBucketName, ssSourceObjectName);
+			try
+			{
+				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName);
+			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssSourceBucketName, ssSourceObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+
+			// Move is copy-then-delete and is not atomic: if the delete fails, both objects exist.
+			// Surface that state explicitly instead of a generic error.
+			try
+			{
+				storageClient.DeleteObject(ssSourceBucketName, ssSourceObjectName);
+			}
+			catch (Google.GoogleApiException e)
+			{
+				throw new Exception("The object was copied to '" + ssDestinationBucketName + "/" + ssDestinationObjectName + "' but the source '" + ssSourceBucketName + "/" + ssSourceObjectName + "' could not be deleted - both objects currently exist. Cause: " + e.Message, e);
+			}
 		} // MssObject_Move
 
 		/// <summary>
@@ -83,10 +104,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				ssMetadata.ssSTGCS_ObjectMetadata.ssTimeCreated = obj.TimeCreatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1);
 				ssMetadata.ssSTGCS_ObjectMetadata.ssUpdated = obj.UpdatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1);
 			}
-			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && !IsBucketNotFound(e))
 			{
 				ssExists = false;
 			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssObject_GetMetadata
 		/// <summary>
 		/// Caches of StorageClient/UrlSigner instances per service account. Extension actions run on every
@@ -116,12 +139,19 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// </summary>
 		private static ServiceAccountCredential GetServiceAccountCredential(string clientEmail, string privateKey)
 		{
-			var initializer = new ServiceAccountCredential.Initializer(clientEmail)
+			try
 			{
-				Scopes = new[] { StorageService.Scope.CloudPlatform }
-			}.FromPrivateKey(privateKey.Replace("\\n", "\n"));
+				var initializer = new ServiceAccountCredential.Initializer(clientEmail)
+				{
+					Scopes = new[] { StorageService.Scope.CloudPlatform }
+				}.FromPrivateKey(privateKey.Replace("\\n", "\n"));
 
-			return new ServiceAccountCredential(initializer);
+				return new ServiceAccountCredential(initializer);
+			}
+			catch (Exception e)
+			{
+				throw new ArgumentException("The PrivateKey could not be parsed. Provide the full 'private_key' value from the service account JSON key, including the -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- lines.", e);
+			}
 		}
 
 		/// <summary>
@@ -145,6 +175,52 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		}
 
 		/// <summary>
+		/// True when a 404 from GCS refers to the bucket itself rather than an object inside it
+		/// (Google reports "The specified bucket does not exist." vs "No such object: ...").
+		/// </summary>
+		private static bool IsBucketNotFound(Google.GoogleApiException e)
+		{
+			string msg = (e.Error != null ? e.Error.Message : null) ?? e.Message ?? "";
+			return msg.IndexOf("bucket", StringComparison.OrdinalIgnoreCase) >= 0;
+		}
+
+		/// <summary>
+		/// Translates a GoogleApiException into an exception with an actionable message for
+		/// OutSystems logs, instead of Google's raw API error. The original exception is kept
+		/// as InnerException.
+		/// </summary>
+		private static Exception FriendlyException(Google.GoogleApiException e, string clientEmail, string bucketName, string objectName)
+		{
+			string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
+
+			if (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && bucketName != null)
+			{
+				if (objectName != null && !IsBucketNotFound(e))
+					return new Exception("Object '" + objectName + "' was not found in bucket '" + bucketName + "'. Details: " + details, e);
+				return new Exception("Bucket '" + bucketName + "' does not exist (names are case-sensitive and must match exactly). Details: " + details, e);
+			}
+			if (e.HttpStatusCode == System.Net.HttpStatusCode.Forbidden)
+				return new Exception("Access denied for service account '" + clientEmail + "'. Grant it the required IAM role in Google Cloud (Storage Object Admin for object operations, Storage Admin for bucket operations). Details: " + details, e);
+			if (e.HttpStatusCode == System.Net.HttpStatusCode.Unauthorized)
+				return new Exception("Google rejected the request as unauthenticated. Check that ClientEmail and PrivateKey belong to the same service account and that the key has not been revoked. Details: " + details, e);
+			if (e.HttpStatusCode == System.Net.HttpStatusCode.Conflict)
+			{
+				if (details != null && details.IndexOf("not empty", StringComparison.OrdinalIgnoreCase) >= 0)
+					return new Exception("Bucket '" + bucketName + "' is not empty. Delete all objects in it before deleting the bucket. Details: " + details, e);
+				return new Exception("Conflict: " + details + " (for Bucket_Create this usually means the name is already taken - bucket names are global across all of Google Cloud Storage).", e);
+			}
+			return new Exception("Google Cloud Storage error (" + (int)e.HttpStatusCode + " " + e.HttpStatusCode + "): " + details, e);
+		}
+
+		/// <summary>
+		/// Translates a token endpoint failure (typically 'invalid_grant') into an actionable message.
+		/// </summary>
+		private static Exception FriendlyAuthException(TokenResponseException e, string clientEmail)
+		{
+			return new Exception("Google rejected the service account credentials for '" + clientEmail + "' (ClientEmail/PrivateKey mismatch, deleted service account, revoked key, or server clock skew). Details: " + e.Message, e);
+		}
+
+		/// <summary>
 		/// Lists all buckets in the specified project.
 		/// </summary>
 		/// <param name="ssProjectId"></param>
@@ -156,23 +232,28 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
 			ssBucketList = new RLGCS_BucketRecordList();
 
-			var buckets = storageClient.ListBuckets(ssProjectId);
-
-			foreach (var b in buckets)
+			try
 			{
-				var record = new RCGCS_BucketRecord(null)
-				{
-					ssSTGCS_Bucket =
-					{
-						ssName = b.Name,
-						ssLocation = b.Location,
-						ssStorageClass = b.StorageClass,
-						ssCreated = b.TimeCreatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1)
-					}
-				};
+				var buckets = storageClient.ListBuckets(ssProjectId);
 
-				ssBucketList.Append(record);
+				foreach (var b in buckets)
+				{
+					var record = new RCGCS_BucketRecord(null)
+					{
+						ssSTGCS_Bucket =
+						{
+							ssName = b.Name,
+							ssLocation = b.Location,
+							ssStorageClass = b.StorageClass,
+							ssCreated = b.TimeCreatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1)
+						}
+					};
+
+					ssBucketList.Append(record);
+				}
 			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, null, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssBucket_List
 
 		/// <summary>
@@ -187,14 +268,19 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		{
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
 
-			storageClient.CreateBucket(
-				ssProjectId,
-				new Bucket
-				{
-					Name = ssBucketName,
-					Location = ssLocation
-				}
-			);
+			try
+			{
+				storageClient.CreateBucket(
+					ssProjectId,
+					new Bucket
+					{
+						Name = ssBucketName,
+						Location = ssLocation
+					}
+				);
+			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssBucket_Create
 
 		/// <summary>
@@ -207,7 +293,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		public void MssBucket_Delete(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName)
 		{
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
-			storageClient.DeleteBucket(ssBucketName);
+			try
+			{
+				storageClient.DeleteBucket(ssBucketName);
+			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssBucket_Delete
 
 		/// <summary>
@@ -221,7 +312,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		public void MssObject_Delete(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName)
 		{
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
-			storageClient.DeleteObject(ssBucketName, ssObjectName);
+			try
+			{
+				storageClient.DeleteObject(ssBucketName, ssObjectName);
+			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssObject_Delete
 
 		/// <summary>
@@ -242,10 +338,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				storageClient.GetObject(ssBucketName, ssObjectName);
 				ssExists = true;
 			}
-			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && !IsBucketNotFound(e))
 			{
 				ssExists = false;
 			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssObject_Exists
 
         /// <summary>
@@ -261,6 +359,11 @@ namespace OutSystems.NssGoogleCloudStorage_ext
         /// <param name="ssURL"></param>
         public void MssObject_GetSignedUrl(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssOperation, string ssBucketName, string ssObjectName, int ssExpirationMinutes, out string ssURL)
 		{
+			if (ssExpirationMinutes <= 0)
+				throw new ArgumentException("ExpirationMinutes must be greater than zero (received " + ssExpirationMinutes + ").");
+			if (ssExpirationMinutes > 10080)
+				throw new ArgumentException("ExpirationMinutes cannot exceed 10080 minutes (7 days), the maximum validity of a Google Cloud V4 signed URL (received " + ssExpirationMinutes + ").");
+
 			var urlSigner = GetUrlSigner(ssClientEmail, ssPrivateKey);
 
 			HttpMethod method;
@@ -301,10 +404,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		{
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
 
-			using (var stream = new MemoryStream(ssContent))
+			try
 			{
-				storageClient.UploadObject(ssBucketName, ssObjectName, ssContentType, stream);
+				using (var stream = new MemoryStream(ssContent))
+				{
+					storageClient.UploadObject(ssBucketName, ssObjectName, ssContentType, stream);
+				}
 			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssObject_Upload
 
 		/// <summary>
@@ -321,12 +429,17 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		{
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
 
-			using (var stream = new MemoryStream())
+			try
 			{
-				var obj = storageClient.DownloadObject(ssBucketName, ssObjectName, stream);
-				ssContent = stream.ToArray();
-				ssContentType = obj.ContentType;
+				using (var stream = new MemoryStream())
+				{
+					var obj = storageClient.DownloadObject(ssBucketName, ssObjectName, stream);
+					ssContent = stream.ToArray();
+					ssContentType = obj.ContentType;
+				}
 			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssObject_Download
 
 		/// <summary>
@@ -342,17 +455,23 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		{
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
 			ssObjectList = new RLGCS_ObjectRecordList();
-			var objects = storageClient.ListObjects(ssBucketName, ssPrefix);
 
-			foreach (var obj in objects)
+			try
 			{
-				var record = new RCGCS_ObjectRecord(null);
-				record.ssSTGCS_Object.ssName = obj.Name;
-				record.ssSTGCS_Object.ssSize = (long)Math.Min(obj.Size ?? 0, long.MaxValue);
-				record.ssSTGCS_Object.ssContentType = obj.ContentType;
-				record.ssSTGCS_Object.ssUpdated = obj.UpdatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1);
-				ssObjectList.Append(record);
+				var objects = storageClient.ListObjects(ssBucketName, ssPrefix);
+
+				foreach (var obj in objects)
+				{
+					var record = new RCGCS_ObjectRecord(null);
+					record.ssSTGCS_Object.ssName = obj.Name;
+					record.ssSTGCS_Object.ssSize = (long)Math.Min(obj.Size ?? 0, long.MaxValue);
+					record.ssSTGCS_Object.ssContentType = obj.ContentType;
+					record.ssSTGCS_Object.ssUpdated = obj.UpdatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1);
+					ssObjectList.Append(record);
+				}
 			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
 		} // MssObject_List
 
 	} // CssGoogleCloudStorage_ext
