@@ -1,0 +1,37 @@
+# Integration Studio automatic backups (timestamped churn, not source)
+Backups/
+
+# Integration Studio scaffold template (regenerated copy, not the real source)
+Templates/
+
+# Build intermediates
+Source/NET/obj/
+Source/NET/Bin/*.pdb
+Source/NET/OutSystems.NssGoogleCloudStorage_ext.xml
+
+# OutSystems platform assemblies: proprietary binaries that ship with Integration
+# Studio itself and must not be redistributed. Copy these into Source/NET/Bin from
+# your own Integration Studio installation before opening/building the project.
+# (Third-party NuGet DLLs in Bin/ ARE committed, since there's no packages.config
+# and Integration Studio needs them present as plain files to compile.)
+Source/NET/Bin/OutSystems.RuntimeCommon.dll
+Source/NET/Bin/OutSystems.RuntimeCommon.xml
+Source/NET/Bin/OutSystems.HubEdition.RuntimePlatform.dll
+Source/NET/Bin/OutSystems.HubEdition.RuntimePlatform.xml
+Source/NET/Bin/OutSystems.HubEdition.DatabaseAbstractionLayer.dll
+Source/NET/Bin/OutSystems.HubEdition.DatabaseAbstractionLayer.xml
+Source/NET/Bin/OutSystems.REST.API.dll
+Source/NET/Bin/OutSystems.REST.API.xml
+Source/NET/Bin/OutSystems.SOAP.API.dll
+Source/NET/Bin/OutSystems.SOAP.API.xml
+Source/NET/Bin/OutSystems.SAP.API.dll
+Source/NET/Bin/OutSystems.SAP.API.xml
+
+# The compiled extension output itself is a build artifact, not source
+Source/NET/Bin/OutSystems.NssGoogleCloudStorage_ext.dll
+Source/NET/Bin/OutSystems.NssGoogleCloudStorage_ext.xml
+
+# Visual Studio / user-specific
+*.user
+*.suo
+.vs/
