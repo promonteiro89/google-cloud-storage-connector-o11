@@ -4,6 +4,9 @@ Backups/
 # Integration Studio scaffold template (regenerated copy, not the real source)
 Templates/
 
+# Integration Studio empty placeholder files
+%Name%.*
+
 # Build intermediates
 Source/NET/obj/
 Source/NET/Bin/*.pdb
