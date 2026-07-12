@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [master, 'feature/**']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    env:
+      # Empty on fork PRs (secrets are not exposed) -> build/test steps skip gracefully.
+      OS_DEPS_KEY: ${{ secrets.OS_DEPS_SSH_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notice (fork PRs)
+        if: env.OS_DEPS_KEY == ''
+        shell: powershell
+        run: |
+          Write-Host "OS_DEPS_SSH_KEY secret not available (fork PR?)."
+          Write-Host "The OutSystems platform assemblies cannot be fetched, so compile + tests are skipped."
+          Write-Host "A maintainer will run the full suite before merging."
+
+      - name: Fetch OutSystems platform assemblies (private, read-only)
+        if: env.OS_DEPS_KEY != ''
+        uses: actions/checkout@v4
+        with:
+          repository: promonteiro89/outsystems-platform-deps
+          ssh-key: ${{ secrets.OS_DEPS_SSH_KEY }}
+          path: os-deps
+
+      - name: Place platform assemblies in Bin
+        if: env.OS_DEPS_KEY != ''
+        shell: powershell
+        run: Copy-Item os-deps\*.dll Source\NET\Bin\ -Force
+
+      - name: Setup MSBuild
+        if: env.OS_DEPS_KEY != ''
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build extension (.NET Framework 4.8)
+        if: env.OS_DEPS_KEY != ''
+        shell: powershell
+        run: |
+          msbuild Source\NET\GoogleCloudStorage_ext.csproj /p:Configuration=Release /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Cache fake-gcs-server
+        if: env.OS_DEPS_KEY != ''
+        uses: actions/cache@v4
+        with:
+          path: tests/.tools/fake-gcs-server.exe
+          key: fake-gcs-server-1.54.0-windows-amd64
+
+      # Windows PowerShell 5.1 (shell: powershell) is required: the harness must run on
+      # .NET Framework 4.8, the extension's actual runtime. pwsh (7.x) would be .NET Core.
+      - name: Run test suite (49 checks, emulator + offline)
+        if: env.OS_DEPS_KEY != ''
+        shell: powershell
+        run: .\tests\run-tests.ps1 -Download
