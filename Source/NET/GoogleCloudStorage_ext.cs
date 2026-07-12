@@ -126,8 +126,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				ssMetadata.ssSTGCS_ObjectMetadata.ssMetageneration = obj.Metageneration ?? 0;
 				ssMetadata.ssSTGCS_ObjectMetadata.ssStorageClass = obj.StorageClass;
 				ssMetadata.ssSTGCS_ObjectMetadata.ssMediaLink = obj.MediaLink;
-				ssMetadata.ssSTGCS_ObjectMetadata.ssTimeCreated = obj.TimeCreatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1);
-				ssMetadata.ssSTGCS_ObjectMetadata.ssUpdated = obj.UpdatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1);
+				ssMetadata.ssSTGCS_ObjectMetadata.ssTimeCreated = ParseTimestamp(obj.TimeCreatedRaw);
+				ssMetadata.ssSTGCS_ObjectMetadata.ssUpdated = ParseTimestamp(obj.UpdatedRaw);
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && !IsBucketNotFound(e))
 			{
@@ -181,9 +181,21 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 		/// <summary>
 		/// Returns a cached StorageClient for the given service account, creating it on first use.
+		/// Honors the standard STORAGE_EMULATOR_HOST environment variable (never set on a real
+		/// OutSystems server): when present, connects unauthenticated to a local GCS emulator
+		/// such as fake-gcs-server, enabling integration tests without Google credentials.
 		/// </summary>
 		private static StorageClient GetStorageClient(string projectId, string clientEmail, string privateKey)
 		{
+			string emulatorHost = Environment.GetEnvironmentVariable("STORAGE_EMULATOR_HOST");
+			if (!string.IsNullOrEmpty(emulatorHost))
+			{
+				string baseUri = (emulatorHost.Contains("://") ? emulatorHost : "http://" + emulatorHost).TrimEnd('/') + "/storage/v1/";
+				return storageClientCache.GetOrAdd(
+					"emulator|" + baseUri,
+					_ => new StorageClientBuilder { BaseUri = baseUri, UnauthenticatedAccess = true }.Build());
+			}
+
 			return storageClientCache.GetOrAdd(
 				GetCredentialCacheKey(clientEmail, privateKey),
 				_ => StorageClient.Create(GetServiceAccountCredential(clientEmail, privateKey).ToGoogleCredential()));
@@ -197,6 +209,21 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			return urlSignerCache.GetOrAdd(
 				GetCredentialCacheKey(clientEmail, privateKey),
 				_ => UrlSigner.FromCredential(GetServiceAccountCredential(clientEmail, privateKey)));
+		}
+
+		/// <summary>
+		/// Parses a GCS RFC3339 timestamp defensively. The SDK's *DateTimeOffset properties use a
+		/// strict format (exactly what production GCS emits); parsing the raw string with a flexible
+		/// parser also tolerates emulators (e.g. fake-gcs-server emits microsecond precision with a
+		/// local UTC offset) and any future format drift. Returns 1900-01-01 (the OutSystems null
+		/// date) when missing or unparseable.
+		/// </summary>
+		private static DateTime ParseTimestamp(string raw)
+		{
+			DateTimeOffset dto;
+			if (!string.IsNullOrEmpty(raw) && DateTimeOffset.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out dto))
+				return dto.UtcDateTime;
+			return new DateTime(1900, 1, 1);
 		}
 
 		/// <summary>
@@ -270,7 +297,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							ssName = b.Name,
 							ssLocation = b.Location,
 							ssStorageClass = b.StorageClass,
-							ssCreated = b.TimeCreatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1)
+							ssCreated = ParseTimestamp(b.TimeCreatedRaw)
 						}
 					};
 
@@ -523,7 +550,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							record.ssSTGCS_Object.ssName = obj.Name;
 							record.ssSTGCS_Object.ssSize = (long)Math.Min(obj.Size ?? 0, long.MaxValue);
 							record.ssSTGCS_Object.ssContentType = obj.ContentType;
-							record.ssSTGCS_Object.ssUpdated = obj.UpdatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1);
+							record.ssSTGCS_Object.ssUpdated = ParseTimestamp(obj.UpdatedRaw);
 							ssObjectList.Append(record);
 						}
 					}

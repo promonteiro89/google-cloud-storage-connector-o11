@@ -20,7 +20,8 @@ Thanks for your interest in contributing to the Google Cloud Storage Connector f
    ```
 2. Make your change, keeping commits focused and descriptive.
 3. Verify the extension compiles (Integration Studio **Verify**, or an MSBuild `Release` build with no warnings).
-4. Open a Pull Request against `master` describing the change and its motivation.
+4. Run the test suite — no Google credentials needed: `tests\run-tests.ps1 -Download` (see [tests/README.md](tests/README.md)). All tests must pass.
+5. Open a Pull Request against `master` describing the change and its motivation.
 
 ## Coding Conventions
 
