@@ -1051,4 +1051,183 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		}
 	} // STGCS_ObjectMetadataStructure
 
+	/// <summary>
+	/// Structure <code>STGCS_PrefixStructure</code> that represents the Service Studio structure
+	///  <code>GCS_Prefix</code> <p> Description: A folder-style entry returned by Object_List whe
+	/// n Delimiter is set. Represents a group of objects that share a common prefix (e.g. 'images/2026/'),
+	///  letting you navigate a bucket like a directory tree without listing every object inside.</p>
+	/// </summary>
+	[Serializable()]
+	public partial struct STGCS_PrefixStructure: ISerializable, ITypedRecord<STGCS_PrefixStructure>, ISimpleRecord {
+		internal static readonly GlobalObjectKey IdPrefix = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*ZgOyDe5mNUmeGlq3cpw3Nw");
+
+		public static void EnsureInitialized() {}
+		[System.Xml.Serialization.XmlElement("Prefix")]
+		public string ssPrefix;
+
+
+		public BitArray OptimizedAttributes;
+
+		public STGCS_PrefixStructure(params string[] dummy) {
+			OptimizedAttributes = null;
+			ssPrefix = "";
+		}
+
+		public BitArray[] GetDefaultOptimizedValues() {
+			BitArray[] all = new BitArray[0];
+			return all;
+		}
+
+		public BitArray[] AllOptimizedAttributes {
+			set {
+				if (value == null) {
+				} else {
+				}
+			}
+			get {
+				BitArray[] all = new BitArray[0];
+				return all;
+			}
+		}
+
+		/// <summary>
+		/// Read a record from database
+		/// </summary>
+		/// <param name="r"> Data base reader</param>
+		/// <param name="index"> index</param>
+		public void Read(IDataReader r, ref int index) {
+			ssPrefix = r.ReadText(index++, "GCS_Prefix.Prefix", "");
+		}
+		/// <summary>
+		/// Read from database
+		/// </summary>
+		/// <param name="r"> Data reader</param>
+		public void ReadDB(IDataReader r) {
+			int index = 0;
+			Read(r, ref index);
+		}
+
+		/// <summary>
+		/// Read from record
+		/// </summary>
+		/// <param name="r"> Record</param>
+		public void ReadIM(STGCS_PrefixStructure r) {
+			this = r;
+		}
+
+
+		public static bool operator == (STGCS_PrefixStructure a, STGCS_PrefixStructure b) {
+			if (a.ssPrefix != b.ssPrefix) return false;
+			return true;
+		}
+
+		public static bool operator != (STGCS_PrefixStructure a, STGCS_PrefixStructure b) {
+			return !(a==b);
+		}
+
+		public override bool Equals(object o) {
+			if (o.GetType() != typeof(STGCS_PrefixStructure)) return false;
+			return (this == (STGCS_PrefixStructure) o);
+		}
+
+		public override int GetHashCode() {
+			try {
+				return base.GetHashCode()
+				^ ssPrefix.GetHashCode()
+				;
+			} catch {
+				return base.GetHashCode();
+			}
+		}
+
+		public void GetObjectData(SerializationInfo info, StreamingContext context) {
+			Type objInfo = this.GetType();
+			FieldInfo[] fields;
+			fields = objInfo.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			for (int i = 0; i < fields.Length; i++)
+			if (fields[i] .FieldType.IsSerializable)
+			info.AddValue(fields[i] .Name, fields[i] .GetValue(this));
+		}
+
+		public STGCS_PrefixStructure(SerializationInfo info, StreamingContext context) {
+			OptimizedAttributes = null;
+			ssPrefix = "";
+			Type objInfo = this.GetType();
+			FieldInfo fieldInfo = null;
+			fieldInfo = objInfo.GetField("ssPrefix", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssPrefix' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssPrefix = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+		}
+
+		public void RecursiveReset() {
+		}
+
+		public void InternalRecursiveSave() {
+		}
+
+
+		public STGCS_PrefixStructure Duplicate() {
+			STGCS_PrefixStructure t;
+			t.ssPrefix = this.ssPrefix;
+			t.OptimizedAttributes = null;
+			return t;
+		}
+
+		IRecord IRecord.Duplicate() {
+			return Duplicate();
+		}
+
+		public void ToXml(Object parent, System.Xml.XmlElement baseElem, String fieldName, int detailLevel) {
+			System.Xml.XmlElement recordElem = VarValue.AppendChild(baseElem, "Structure");
+			if (fieldName != null) {
+				VarValue.AppendAttribute(recordElem, "debug.field", fieldName);
+				fieldName = fieldName.ToLowerInvariant();
+			}
+			if (detailLevel > 0) {
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".Prefix")) VarValue.AppendAttribute(recordElem, "Prefix", ssPrefix, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "Prefix");
+			} else {
+				VarValue.AppendDeferredEvaluationElement(recordElem);
+			}
+		}
+
+		public void EvaluateFields(VarValue variable, Object parent, String baseName, String fields) {
+			String head = VarValue.GetHead(fields);
+			String tail = VarValue.GetTail(fields);
+			variable.Found = false;
+			if (head == "prefix") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".Prefix")) variable.Value = ssPrefix; else variable.Optimized = true;
+			}
+			if (variable.Found && tail != null) variable.EvaluateFields(this, head, tail);
+		}
+
+		public bool ChangedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public bool OptimizedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public object AttributeGet(GlobalObjectKey key) {
+			if (key == IdPrefix) {
+				return ssPrefix;
+			} else {
+				throw new Exception("Invalid key");
+			}
+		}
+		public void FillFromOther(IRecord other) {
+			if (other == null) return;
+			ssPrefix = (string) other.AttributeGet(IdPrefix);
+		}
+		public bool IsDefault() {
+			STGCS_PrefixStructure defaultStruct = new STGCS_PrefixStructure(null);
+			if (this.ssPrefix != defaultStruct.ssPrefix) return false;
+			return true;
+		}
+	} // STGCS_PrefixStructure
+
 } // OutSystems.NssGoogleCloudStorage_ext

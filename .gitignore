@@ -34,6 +34,9 @@ Source/NET/Bin/OutSystems.SAP.API.xml
 Source/NET/Bin/OutSystems.NssGoogleCloudStorage_ext.dll
 Source/NET/Bin/OutSystems.NssGoogleCloudStorage_ext.xml
 
+# Test tooling (emulator binary, generated throwaway key)
+tests/.tools/
+
 # Visual Studio / user-specific
 *.user
 *.suo

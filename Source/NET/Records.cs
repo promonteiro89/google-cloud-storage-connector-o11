@@ -584,4 +584,195 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			return true;
 		}
 	} // RCGCS_ObjectMetadataRecord
+
+	/// <summary>
+	/// Structure <code>RCGCS_PrefixRecord</code>
+	/// </summary>
+	[Serializable()]
+	public partial struct RCGCS_PrefixRecord: ISerializable, ITypedRecord<RCGCS_PrefixRecord> {
+		internal static readonly GlobalObjectKey IdGCS_Prefix = GlobalObjectKey.Parse("2UmDmepsh0WSfJ_D1JexCA*Cjre3cgScEXb57igxa6wog");
+
+		public static void EnsureInitialized() {}
+		[System.Xml.Serialization.XmlElement("GCS_Prefix")]
+		public STGCS_PrefixStructure ssSTGCS_Prefix;
+
+
+		public static implicit operator STGCS_PrefixStructure(RCGCS_PrefixRecord r) {
+			return r.ssSTGCS_Prefix;
+		}
+
+		public static implicit operator RCGCS_PrefixRecord(STGCS_PrefixStructure r) {
+			RCGCS_PrefixRecord res = new RCGCS_PrefixRecord(null);
+			res.ssSTGCS_Prefix = r;
+			return res;
+		}
+
+		public BitArray OptimizedAttributes;
+
+		public RCGCS_PrefixRecord(params string[] dummy) {
+			OptimizedAttributes = null;
+			ssSTGCS_Prefix = new STGCS_PrefixStructure(null);
+		}
+
+		public BitArray[] GetDefaultOptimizedValues() {
+			BitArray[] all = new BitArray[1];
+			all[0] = null;
+			return all;
+		}
+
+		public BitArray[] AllOptimizedAttributes {
+			set {
+				if (value == null) {
+				} else {
+					ssSTGCS_Prefix.OptimizedAttributes = value[0];
+				}
+			}
+			get {
+				BitArray[] all = new BitArray[1];
+				all[0] = null;
+				return all;
+			}
+		}
+
+		/// <summary>
+		/// Read a record from database
+		/// </summary>
+		/// <param name="r"> Data base reader</param>
+		/// <param name="index"> index</param>
+		public void Read(IDataReader r, ref int index) {
+			ssSTGCS_Prefix.Read(r, ref index);
+		}
+		/// <summary>
+		/// Read from database
+		/// </summary>
+		/// <param name="r"> Data reader</param>
+		public void ReadDB(IDataReader r) {
+			int index = 0;
+			Read(r, ref index);
+		}
+
+		/// <summary>
+		/// Read from record
+		/// </summary>
+		/// <param name="r"> Record</param>
+		public void ReadIM(RCGCS_PrefixRecord r) {
+			this = r;
+		}
+
+
+		public static bool operator == (RCGCS_PrefixRecord a, RCGCS_PrefixRecord b) {
+			if (a.ssSTGCS_Prefix != b.ssSTGCS_Prefix) return false;
+			return true;
+		}
+
+		public static bool operator != (RCGCS_PrefixRecord a, RCGCS_PrefixRecord b) {
+			return !(a==b);
+		}
+
+		public override bool Equals(object o) {
+			if (o.GetType() != typeof(RCGCS_PrefixRecord)) return false;
+			return (this == (RCGCS_PrefixRecord) o);
+		}
+
+		public override int GetHashCode() {
+			try {
+				return base.GetHashCode()
+				^ ssSTGCS_Prefix.GetHashCode()
+				;
+			} catch {
+				return base.GetHashCode();
+			}
+		}
+
+		public void GetObjectData(SerializationInfo info, StreamingContext context) {
+			Type objInfo = this.GetType();
+			FieldInfo[] fields;
+			fields = objInfo.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			for (int i = 0; i < fields.Length; i++)
+			if (fields[i] .FieldType.IsSerializable)
+			info.AddValue(fields[i] .Name, fields[i] .GetValue(this));
+		}
+
+		public RCGCS_PrefixRecord(SerializationInfo info, StreamingContext context) {
+			OptimizedAttributes = null;
+			ssSTGCS_Prefix = new STGCS_PrefixStructure(null);
+			Type objInfo = this.GetType();
+			FieldInfo fieldInfo = null;
+			fieldInfo = objInfo.GetField("ssSTGCS_Prefix", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssSTGCS_Prefix' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssSTGCS_Prefix = (STGCS_PrefixStructure) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+		}
+
+		public void RecursiveReset() {
+			ssSTGCS_Prefix.RecursiveReset();
+		}
+
+		public void InternalRecursiveSave() {
+			ssSTGCS_Prefix.InternalRecursiveSave();
+		}
+
+
+		public RCGCS_PrefixRecord Duplicate() {
+			RCGCS_PrefixRecord t;
+			t.ssSTGCS_Prefix = (STGCS_PrefixStructure) this.ssSTGCS_Prefix.Duplicate();
+			t.OptimizedAttributes = null;
+			return t;
+		}
+
+		IRecord IRecord.Duplicate() {
+			return Duplicate();
+		}
+
+		public void ToXml(Object parent, System.Xml.XmlElement baseElem, String fieldName, int detailLevel) {
+			System.Xml.XmlElement recordElem = VarValue.AppendChild(baseElem, "Record");
+			if (fieldName != null) {
+				VarValue.AppendAttribute(recordElem, "debug.field", fieldName);
+			}
+			if (detailLevel > 0) {
+				ssSTGCS_Prefix.ToXml(this, recordElem, "GCS_Prefix", detailLevel - 1);
+			} else {
+				VarValue.AppendDeferredEvaluationElement(recordElem);
+			}
+		}
+
+		public void EvaluateFields(VarValue variable, Object parent, String baseName, String fields) {
+			String head = VarValue.GetHead(fields);
+			String tail = VarValue.GetTail(fields);
+			variable.Found = false;
+			if (head == "gcs_prefix") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".GCS_Prefix")) variable.Value = ssSTGCS_Prefix; else variable.Optimized = true;
+				variable.SetFieldName("gcs_prefix");
+			}
+			if (variable.Found && tail != null) variable.EvaluateFields(this, head, tail);
+		}
+
+		public bool ChangedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public bool OptimizedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public object AttributeGet(GlobalObjectKey key) {
+			if (key == IdGCS_Prefix) {
+				return ssSTGCS_Prefix;
+			} else {
+				throw new Exception("Invalid key");
+			}
+		}
+		public void FillFromOther(IRecord other) {
+			if (other == null) return;
+			ssSTGCS_Prefix.FillFromOther((IRecord) other.AttributeGet(IdGCS_Prefix));
+		}
+		public bool IsDefault() {
+			RCGCS_PrefixRecord defaultStruct = new RCGCS_PrefixRecord(null);
+			if (this.ssSTGCS_Prefix != defaultStruct.ssSTGCS_Prefix) return false;
+			return true;
+		}
+	} // RCGCS_PrefixRecord
 }
