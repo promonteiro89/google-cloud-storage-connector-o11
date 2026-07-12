@@ -7,7 +7,7 @@
     account or credentials required:
 
       - Integration tests run against fake-gcs-server, a local Google Cloud Storage
-        emulator, via the standard STORAGE_EMULATOR_HOST environment variable.
+        emulator, via the extension-specific GCSCONNECTOR_EMULATOR_HOST environment variable.
       - Signed-URL, caching, and validation tests run fully offline (V4 signing is
         local RSA; a throwaway key is generated on first run).
 
@@ -98,9 +98,9 @@ if (-not $SkipEmulator) {
     if (-not $ready) { throw "fake-gcs-server did not start listening on port $EmulatorPort." }
     $emulatorOn = $true
     # Must be set in-process BEFORE the extension creates its first StorageClient
-    [Environment]::SetEnvironmentVariable('STORAGE_EMULATOR_HOST', "127.0.0.1:$EmulatorPort")
+    [Environment]::SetEnvironmentVariable('GCSCONNECTOR_EMULATOR_HOST', "127.0.0.1:$EmulatorPort")
 } else {
-    [Environment]::SetEnvironmentVariable('STORAGE_EMULATOR_HOST', $null)
+    [Environment]::SetEnvironmentVariable('GCSCONNECTOR_EMULATOR_HOST', $null)
 }
 
 # --- Test harness (compiled against the real extension DLL, .NET Framework 4.8) ------
@@ -119,5 +119,5 @@ try {
 }
 finally {
     if ($emulatorProc -and -not $emulatorProc.HasExited) { Stop-Process -Id $emulatorProc.Id -Force }
-    [Environment]::SetEnvironmentVariable('STORAGE_EMULATOR_HOST', $null)
+    [Environment]::SetEnvironmentVariable('GCSCONNECTOR_EMULATOR_HOST', $null)
 }

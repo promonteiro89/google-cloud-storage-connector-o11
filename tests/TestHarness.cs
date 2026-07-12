@@ -4,7 +4,7 @@
 //
 // Exercises the extension exactly as OutSystems developers consume it: through the
 // public Mss* action methods. Integration tests target a local fake-gcs-server via
-// STORAGE_EMULATOR_HOST; signing/caching/validation tests are fully offline.
+// GCSCONNECTOR_EMULATOR_HOST; signing/caching/validation tests are fully offline.
 
 using System;
 using System.Collections.Generic;

@@ -4,7 +4,7 @@ Tests every action the extension exposes to OutSystems developers — **no Googl
 
 ## How it works
 
-- **Integration tests** run the real extension DLL against [fake-gcs-server](https://github.com/fsouza/fake-gcs-server), a local in-memory Google Cloud Storage emulator, using the standard `STORAGE_EMULATOR_HOST` environment variable (which the extension honors — it is never set on a real OutSystems server, where the extension always talks to production GCS).
+- **Integration tests** run the real extension DLL against [fake-gcs-server](https://github.com/fsouza/fake-gcs-server), a local in-memory Google Cloud Storage emulator, using the extension-specific `GCSCONNECTOR_EMULATOR_HOST` environment variable (which the extension honors — it is never set on a real OutSystems server, where the extension always talks to production GCS).
 - **Offline tests** (signed URLs, input validation, client caching) need no server at all: V4 URL signing is local RSA cryptography, performed with a throwaway key generated on first run.
 
 ## Running

@@ -306,7 +306,7 @@ The **OutSystems platform assemblies** are *not* included (they are proprietary 
 
 ## Testing
 
-The repo ships a full test suite ([tests/](tests/)) covering every action — **no Google account needed**: integration tests run against the [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) emulator (the extension honors the standard `STORAGE_EMULATOR_HOST` environment variable, which is never set on a real server), and signing/validation/caching tests run fully offline.
+The repo ships a full test suite ([tests/](tests/)) covering every action — **no Google account needed**: integration tests run against the [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) emulator (the extension honors the extension-specific `GCSCONNECTOR_EMULATOR_HOST` environment variable, which is never set on a real server), and signing/validation/caching tests run fully offline.
 
 ```powershell
 cd tests
