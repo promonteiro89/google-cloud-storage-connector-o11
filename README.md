@@ -99,14 +99,19 @@ Downloads an object's content and content type.
 | `ContentType` | Out | Text | Stored MIME type |
 
 #### `Object_List`
-Lists objects in a bucket, optionally filtered by prefix.
+Lists objects in a bucket, optionally filtered by prefix, with support for pagination and folder-style navigation.
 
 | Parameter | Direction | Type | Description |
 |-----------|-----------|------|-------------|
 | `ProjectId` / `ClientEmail` / `PrivateKey` | In | Text | GCP credentials |
 | `BucketName` | In | Text | Source bucket |
 | `Prefix` | In | Text | Optional prefix filter for hierarchical navigation |
+| `MaxResults` | In | Integer | Maximum objects to return in this call; `0` (default) returns everything |
+| `PageToken` | In | Text | Continuation token from a previous call's `NextPageToken`; empty starts from the first page |
+| `Delimiter` | In | Text | Typically `/` — groups nested objects into `PrefixList` for folder-style browsing; empty lists recursively |
 | `ObjectList` | Out | List of `GCS_Object` | Object metadata collection |
+| `NextPageToken` | Out | Text | Non-empty when more results exist (paged mode only) — pass it as `PageToken` in the next call |
+| `PrefixList` | Out | List of `GCS_Prefix` | The "folders" found directly under `Prefix` when `Delimiter` is set |
 
 #### `Object_Exists`
 Checks whether an object exists via a lightweight metadata probe.
@@ -172,6 +177,7 @@ Generates a time-limited V4 signed URL for secure, direct-to-browser file access
 | `BucketName` | In | Text | Source bucket |
 | `ObjectName` | In | Text | Full path/filename |
 | `ExpirationMinutes` | In | Integer | Link validity duration (V4 maximum: 7 days / 10 080 minutes) |
+| `ContentType` | In | Text | Optional, for Upload URLs: the exact `Content-Type` the client will send in the PUT. It becomes part of the signature, so mismatching uploads are rejected. Empty allows any. |
 | `URL` | Out | Text | Temporary secure URL. For `Upload`, the client sends an HTTP PUT with the file as the body. |
 
 > **Multi-upload:** signed URLs are bound to a specific object path, so request one `Upload` URL per file (pass each file's `ObjectName`).
@@ -197,6 +203,15 @@ Creates a new globally unique storage bucket.
 | `BucketName` | Text | Globally unique name |
 | `Location` | Text | Geographic region (e.g. `US`, `EU`, `asia-east1`) |
 
+#### `Bucket_Exists`
+Checks whether a bucket exists and is accessible to the service account, without listing its contents.
+
+| Parameter | Direction | Type | Description |
+|-----------|-----------|------|-------------|
+| `ProjectId` / `ClientEmail` / `PrivateKey` | In | Text | GCP credentials |
+| `BucketName` | In | Text | The globally unique name of the storage bucket |
+| `Exists` | Out | Boolean | True if the bucket exists and the service account can access it |
+
 #### `Bucket_Delete`
 Deletes an empty storage bucket.
 
@@ -215,6 +230,10 @@ Object metadata (list entry).
 - `Size`: Long Integer
 - `ContentType`: Text
 - `Updated`: Date Time (UTC)
+
+### `GCS_Prefix`
+A folder-style entry returned by `Object_List` when `Delimiter` is set — a common prefix shared by the objects grouped under it.
+- `Prefix`: Text (e.g. `images/2026/`)
 
 ### `GCS_Bucket`
 Storage container metadata.

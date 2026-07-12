@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -15,6 +16,30 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 {
 	public class CssGoogleCloudStorage_ext : IssGoogleCloudStorage_ext
 	{
+
+		/// <summary>
+		/// Checks whether a bucket exists and is accessible to the service account, without listing its contents.
+		/// </summary>
+		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
+		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
+		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
+		/// <param name="ssExists">True if the bucket exists and the service account can access it.</param>
+		public void MssBucket_Exists(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, out bool ssExists) {
+			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+
+			try
+			{
+				storageClient.GetBucket(ssBucketName);
+				ssExists = true;
+			}
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+			{
+				ssExists = false;
+			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+		} // MssBucket_Exists
 
 		/// <summary>
 		/// Copies an object to another location, within the same bucket or across buckets, without downloading its content. If the destination object exists, it will be overwritten.
@@ -356,8 +381,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
         /// <param name="ssBucketName"></param>
         /// <param name="ssObjectName"></param>
         /// <param name="ssExpirationMinutes"></param>
+        /// <param name="ssContentType">Optional; for Upload URLs, the exact Content-Type the client must send. Becomes part of the signature.</param>
         /// <param name="ssURL"></param>
-        public void MssObject_GetSignedUrl(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssOperation, string ssBucketName, string ssObjectName, int ssExpirationMinutes, out string ssURL)
+        public void MssObject_GetSignedUrl(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssOperation, string ssBucketName, string ssObjectName, int ssExpirationMinutes, string ssContentType, out string ssURL)
 		{
 			if (ssExpirationMinutes <= 0)
 				throw new ArgumentException("ExpirationMinutes must be greater than zero (received " + ssExpirationMinutes + ").");
@@ -382,12 +408,22 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					throw new ArgumentException("Invalid Operation '" + ssOperation + "'. Use 'Download', 'Upload', or 'Delete'.");
 			}
 
-			ssURL = urlSigner.Sign(
-				ssBucketName,
-				ssObjectName,
-				TimeSpan.FromMinutes(ssExpirationMinutes),
-				method
-			);
+			var template = UrlSigner.RequestTemplate
+				.FromBucket(ssBucketName)
+				.WithObjectName(ssObjectName)
+				.WithHttpMethod(method);
+
+			// When a ContentType is provided it becomes part of the signature, so Google
+			// rejects requests whose Content-Type header does not match (relevant for Upload).
+			if (!string.IsNullOrEmpty(ssContentType))
+			{
+				template = template.WithContentHeaders(new Dictionary<string, IEnumerable<string>>
+				{
+					{ "Content-Type", new[] { ssContentType } }
+				});
+			}
+
+			ssURL = urlSigner.Sign(template, UrlSigner.Options.FromDuration(TimeSpan.FromMinutes(ssExpirationMinutes)));
 		} // MssObject_GetSignedUrl
 
 		/// <summary>
@@ -443,31 +479,72 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		} // MssObject_Download
 
 		/// <summary>
-		/// Lists objects in a bucket with an optional prefix filter.
+		/// Lists objects in a bucket with an optional prefix filter, with support for
+		/// pagination (MaxResults/PageToken) and folder-style navigation (Delimiter).
 		/// </summary>
 		/// <param name="ssProjectId"></param>
 		/// <param name="ssClientEmail"></param>
 		/// <param name="ssPrivateKey"></param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssPrefix"></param>
+		/// <param name="ssMaxResults">Maximum number of results for this call; 0 returns everything.</param>
+		/// <param name="ssPageToken">Continuation token from a previous call's NextPageToken.</param>
+		/// <param name="ssDelimiter">Typically "/"; groups nested objects into PrefixList.</param>
 		/// <param name="ssObjectList"></param>
-		public void MssObject_List(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssPrefix, out RLGCS_ObjectRecordList ssObjectList)
+		/// <param name="ssNextPageToken">Non-empty when more results exist (only in paged mode).</param>
+		/// <param name="ssPrefixList">The "folders" directly under Prefix when Delimiter is set.</param>
+		public void MssObject_List(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssPrefix, int ssMaxResults, string ssPageToken, string ssDelimiter, out RLGCS_ObjectRecordList ssObjectList, out string ssNextPageToken, out RLGCS_PrefixRecordList ssPrefixList)
 		{
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
 			ssObjectList = new RLGCS_ObjectRecordList();
+			ssPrefixList = new RLGCS_PrefixRecordList();
+			ssNextPageToken = "";
+
+			if (ssMaxResults < 0)
+				throw new ArgumentException("MaxResults cannot be negative (received " + ssMaxResults + "). Use 0 to return all objects.");
 
 			try
 			{
-				var objects = storageClient.ListObjects(ssBucketName, ssPrefix);
+				var options = new ListObjectsOptions();
+				if (ssMaxResults > 0) options.PageSize = ssMaxResults;
+				if (!string.IsNullOrEmpty(ssPageToken)) options.PageToken = ssPageToken;
+				if (!string.IsNullOrEmpty(ssDelimiter)) options.Delimiter = ssDelimiter;
 
-				foreach (var obj in objects)
+				// Iterate the raw API responses (one per HTTP request) so the continuation
+				// token and the common prefixes ("folders") are available, not just the items.
+				var seenPrefixes = new HashSet<string>();
+				foreach (var page in storageClient.ListObjects(ssBucketName, ssPrefix, options).AsRawResponses())
 				{
-					var record = new RCGCS_ObjectRecord(null);
-					record.ssSTGCS_Object.ssName = obj.Name;
-					record.ssSTGCS_Object.ssSize = (long)Math.Min(obj.Size ?? 0, long.MaxValue);
-					record.ssSTGCS_Object.ssContentType = obj.ContentType;
-					record.ssSTGCS_Object.ssUpdated = obj.UpdatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1);
-					ssObjectList.Append(record);
+					if (page.Items != null)
+					{
+						foreach (var obj in page.Items)
+						{
+							var record = new RCGCS_ObjectRecord(null);
+							record.ssSTGCS_Object.ssName = obj.Name;
+							record.ssSTGCS_Object.ssSize = (long)Math.Min(obj.Size ?? 0, long.MaxValue);
+							record.ssSTGCS_Object.ssContentType = obj.ContentType;
+							record.ssSTGCS_Object.ssUpdated = obj.UpdatedDateTimeOffset?.UtcDateTime ?? new DateTime(1900, 1, 1);
+							ssObjectList.Append(record);
+						}
+					}
+
+					if (page.Prefixes != null)
+					{
+						foreach (var prefix in page.Prefixes)
+						{
+							if (!seenPrefixes.Add(prefix)) continue;
+							var record = new RCGCS_PrefixRecord(null);
+							record.ssSTGCS_Prefix.ssPrefix = prefix;
+							ssPrefixList.Append(record);
+						}
+					}
+
+					if (ssMaxResults > 0)
+					{
+						// Paged mode: return exactly one page and hand back the continuation token.
+						ssNextPageToken = page.NextPageToken ?? "";
+						break;
+					}
 				}
 			}
 			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
