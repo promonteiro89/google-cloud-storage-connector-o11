@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto-imported by MSBuild (including Integration Studio's publish build); Integration
+  Studio regenerates the .csproj but never touches this file.
+
+  This project keeps its referenced assemblies in the build output folder itself
+  (HintPath bin\... with OutputPath bin\). By default, MSBuild registers each
+  reference's companion .xml documentation file as a build output, and a later
+  build whose output list differs deletes the "stale" ones via IncrementalClean -
+  destroying the checked-in documentation files and causing "Missing File"
+  warnings in Integration Studio's 1-Click Publish.
+
+  Restricting the related-file extensions to .pdb stops the .xml docs from ever
+  being registered as outputs, so Clean/IncrementalClean leaves them alone.
+-->
+<Project>
+  <PropertyGroup>
+    <AllowedReferenceRelatedFileExtensions>.pdb</AllowedReferenceRelatedFileExtensions>
+  </PropertyGroup>
+</Project>
