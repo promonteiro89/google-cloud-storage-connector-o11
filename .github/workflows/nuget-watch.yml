@@ -1,0 +1,59 @@
+name: NuGet update watch
+
+# Opens an issue when Google publishes a new stable Google.Cloud.Storage.V1,
+# so the bundled SDK never silently ages. Dependencies live as DLLs in
+# Source/NET/Bin (no PackageReference), so Dependabot can't watch them.
+
+on:
+  schedule:
+    - cron: '0 9 1 * *'   # monthly, 1st at 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare bundled SDK version with latest on NuGet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LATEST=$(curl -s https://api.nuget.org/v3-flatcontainer/google.cloud.storage.v1/index.json \
+            | jq -r '[.versions[] | select(test("-") | not)] | last')
+          CURRENT=$(grep -oP 'Google\.Cloud\.Storage\.V1, Version=\K[0-9]+\.[0-9]+\.[0-9]+' \
+            Source/NET/GoogleCloudStorage_ext.csproj)
+          echo "bundled: $CURRENT   latest stable: $LATEST"
+
+          if [ "$LATEST" = "$CURRENT" ]; then
+            echo "Up to date."
+            exit 0
+          fi
+          if [ "$(printf '%s\n' "$CURRENT" "$LATEST" | sort -V | tail -1)" = "$CURRENT" ]; then
+            echo "Bundled version is newer than or equal to latest stable — nothing to do."
+            exit 0
+          fi
+
+          TITLE="Update Google.Cloud.Storage.V1 to $LATEST (bundled: $CURRENT)"
+          if gh issue list --state open --search "in:title \"$LATEST\"" --json title --jq '.[].title' | grep -qF "$LATEST"; then
+            echo "Issue for $LATEST already exists."
+            exit 0
+          fi
+
+          gh issue create --title "$TITLE" --body "$(cat <<EOF
+          NuGet has a newer stable **Google.Cloud.Storage.V1: $LATEST** (this repo bundles **$CURRENT**).
+
+          Update steps (see CONTRIBUTING.md):
+          1. Download the new package (net462 asset) plus any bumped transitive Google.* dependencies.
+          2. Replace the DLL/XML pairs in \`Source/NET/Bin/\` and update the \`<Reference>\` versions in \`GoogleCloudStorage_ext.csproj\`.
+          3. Build and run \`tests/run-tests.ps1\` — all checks must pass.
+          4. Republish via Integration Studio.
+
+          Release notes: https://github.com/googleapis/google-cloud-dotnet/releases
+          EOF
+          )"

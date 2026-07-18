@@ -1,5 +1,6 @@
 # Google Cloud Storage Connector for OutSystems 11
 
+[![CI](https://github.com/promonteiro89/google-cloud-storage-connector-o11/actions/workflows/ci.yml/badge.svg)](https://github.com/promonteiro89/google-cloud-storage-connector-o11/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/Platform-OutSystems_11-red.svg)](https://www.outsystems.com/)
 [![.NET](https://img.shields.io/badge/.NET_Framework-4.8-blue.svg)](https://dotnet.microsoft.com/download/dotnet-framework/net48)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
