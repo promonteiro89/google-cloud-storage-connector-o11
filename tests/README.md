@@ -25,7 +25,7 @@ Prerequisites:
 - Windows PowerShell 5.1 (runs on .NET Framework 4.8 — the extension's exact runtime)
 - `openssl` on PATH or Git for Windows installed (one-time throwaway key generation)
 
-## Coverage (49 checks)
+## Coverage (60 checks)
 
 | Area | What's verified |
 |---|---|
@@ -35,6 +35,9 @@ Prerequisites:
 | `Object_Exists` | Present/missing objects |
 | `Object_List` | Flat listing, prefix filter, delimiter folders (`PrefixList`), prefix+delimiter, pagination via `MaxResults`/`NextPageToken` |
 | `Object_Copy` / `Object_Move` / `Object_Delete` | Cross-bucket copy/move semantics, source retention/removal |
+| `Object_UpdateMetadata` | Field updates without re-upload, custom key add/overwrite/removal, content untouched, nothing-to-update and missing-object errors |
+| `Object_DeleteByPrefix` | Recursive "folder" delete with count, unrelated objects untouched, zero-match count, empty-prefix rejection |
+| Custom metadata | Upload with key-value metadata, retrieval via `Object_GetMetadata` `CustomMetadata` |
 | `Object_GetSignedUrl` | V4 URL structure, operation case-insensitivity, ContentType-in-signature, expiration bounds (0, >7d, exactly 7d) |
 | Error handling | Missing object/bucket errors, garbage private key → friendly message, negative MaxResults |
 | Caching | `StorageClient`/`UrlSigner` instance reuse, per-credential isolation |

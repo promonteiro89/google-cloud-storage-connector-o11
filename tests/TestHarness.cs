@@ -40,6 +40,27 @@ public static class GcsExtensionTestSuite
         return s.Length <= len ? s : s.Substring(0, len) + "...";
     }
 
+    private static RLGCS_MetadataEntryRecordList Meta(params string[] kvs)
+    {
+        var list = new RLGCS_MetadataEntryRecordList();
+        for (int i = 0; i < kvs.Length; i += 2)
+        {
+            var rec = new RCGCS_MetadataEntryRecord(null);
+            rec.ssSTGCS_MetadataEntry.ssKey = kvs[i];
+            rec.ssSTGCS_MetadataEntry.ssValue = kvs[i + 1];
+            list.Append(rec);
+        }
+        return list;
+    }
+
+    private static Dictionary<string, string> ToDict(RLGCS_MetadataEntryRecordList list)
+    {
+        var d = new Dictionary<string, string>();
+        foreach (var r in list.ToArray(delegate(RCGCS_MetadataEntryRecord x) { return x; }))
+            d[r.ssSTGCS_MetadataEntry.ssKey] = r.ssSTGCS_MetadataEntry.ssValue;
+        return d;
+    }
+
     public static GcsTestResult Run(string binPath, string pem, bool emulator)
     {
         AppDomain.CurrentDomain.AssemblyResolve += delegate(object s, ResolveEventArgs e)
@@ -197,7 +218,7 @@ public static class GcsExtensionTestSuite
         files["img/photo.png"] = photo;
 
         foreach (var kv in files)
-            ext.MssObject_Upload(proj, email, pem, b1, kv.Key, kv.Value, kv.Key.EndsWith(".txt") ? "text/plain" : "application/octet-stream");
+            ext.MssObject_Upload(proj, email, pem, b1, kv.Key, kv.Value, kv.Key.EndsWith(".txt") ? "text/plain" : "application/octet-stream", null);
         OK("Object_Upload of " + files.Count + " objects (incl. empty, 5MB, unicode names)", true);
 
         ext.MssObject_Exists(proj, email, pem, b1, "root.txt", out exists);
@@ -223,8 +244,8 @@ public static class GcsExtensionTestSuite
         OK("Unicode object names round-trip", Encoding.UTF8.GetString(content) == "pdf-ish");
 
         // --- metadata ---
-        bool mdExists; RCGCS_ObjectMetadataRecord md;
-        ext.MssObject_GetMetadata(proj, email, pem, b1, "docs/a.txt", out mdExists, out md);
+        bool mdExists; RCGCS_ObjectMetadataRecord md; RLGCS_MetadataEntryRecordList custom;
+        ext.MssObject_GetMetadata(proj, email, pem, b1, "docs/a.txt", out mdExists, out md, out custom);
         OK("Object_GetMetadata -> Exists True", mdExists);
         OK("GetMetadata Name/Bucket/Size/ContentType",
             md.ssSTGCS_ObjectMetadata.ssName == "docs/a.txt" && md.ssSTGCS_ObjectMetadata.ssBucket == b1 &&
@@ -235,7 +256,9 @@ public static class GcsExtensionTestSuite
         OK("GetMetadata hashes populated", !string.IsNullOrEmpty(md.ssSTGCS_ObjectMetadata.ssMD5Hash) && !string.IsNullOrEmpty(md.ssSTGCS_ObjectMetadata.ssCrc32c),
             md.ssSTGCS_ObjectMetadata.ssMD5Hash + "|" + md.ssSTGCS_ObjectMetadata.ssCrc32c);
 
-        ext.MssObject_GetMetadata(proj, email, pem, b1, "nope.txt", out mdExists, out md);
+        OK("GetMetadata CustomMetadata empty when none set", custom.Length == 0);
+
+        ext.MssObject_GetMetadata(proj, email, pem, b1, "nope.txt", out mdExists, out md, out custom);
         OK("Object_GetMetadata on missing object -> Exists False", !mdExists);
 
         // --- listing: flat, prefix, delimiter, pagination ---
@@ -297,11 +320,75 @@ public static class GcsExtensionTestSuite
         try { byte[] c2; string ct2; ext.MssObject_Download(proj, email, pem, b1, "does-not-exist.txt", out c2, out ct2); OK("Download of missing object raises error", false, "no exception"); }
         catch (Exception ex) { OK("Download of missing object raises error", true, ex.Message); }
 
-        try { ext.MssObject_Upload(proj, email, pem, "no-such-bucket-xyz", "f.txt", new byte[] { 1 }, "text/plain"); OK("Upload to missing bucket raises error", false, "no exception"); }
+        try { ext.MssObject_Upload(proj, email, pem, "no-such-bucket-xyz", "f.txt", new byte[] { 1 }, "text/plain", null); OK("Upload to missing bucket raises error", false, "no exception"); }
         catch (Exception ex) { OK("Upload to missing bucket raises error", true, ex.Message); }
 
         try { ext.MssBucket_Delete(proj, email, pem, b1); OK("Bucket_Delete on non-empty bucket raises error", false, "no exception"); }
         catch (Exception ex) { OK("Bucket_Delete on non-empty bucket raises error", true, ex.Message); }
+
+        // --- custom metadata (v1.5.0) ---
+        ext.MssObject_Upload(proj, email, pem, b1, "meta/tagged.txt", Encoding.UTF8.GetBytes("tagged"), "text/plain",
+            Meta("department", "finance", "owner", "ricardo"));
+        ext.MssObject_GetMetadata(proj, email, pem, b1, "meta/tagged.txt", out mdExists, out md, out custom);
+        var tags = ToDict(custom);
+        OK("Upload with custom metadata round-trips", mdExists && tags.Count == 2 && tags["department"] == "finance" && tags["owner"] == "ricardo",
+            "count=" + tags.Count);
+
+        ext.MssObject_UpdateMetadata(proj, email, pem, b1, "meta/tagged.txt",
+            "application/json", "", "attachment; filename=\"tagged.json\"", "public, max-age=3600",
+            Meta("env", "prod", "owner", ""));
+        ext.MssObject_GetMetadata(proj, email, pem, b1, "meta/tagged.txt", out mdExists, out md, out custom);
+        tags = ToDict(custom);
+        OK("UpdateMetadata sets fields without re-upload",
+            md.ssSTGCS_ObjectMetadata.ssContentType == "application/json" &&
+            md.ssSTGCS_ObjectMetadata.ssCacheControl == "public, max-age=3600" &&
+            md.ssSTGCS_ObjectMetadata.ssContentDisposition.Contains("tagged.json") &&
+            md.ssSTGCS_ObjectMetadata.ssSize == 6,
+            md.ssSTGCS_ObjectMetadata.ssContentType + "|" + md.ssSTGCS_ObjectMetadata.ssCacheControl + "|" + md.ssSTGCS_ObjectMetadata.ssSize);
+        OK("UpdateMetadata adds and removes custom keys",
+            tags.Count == 2 && tags["department"] == "finance" && tags["env"] == "prod" && !tags.ContainsKey("owner"),
+            string.Join(",", tags.Keys));
+
+        byte[] rt; string rtCt;
+        ext.MssObject_Download(proj, email, pem, b1, "meta/tagged.txt", out rt, out rtCt);
+        OK("UpdateMetadata leaves content untouched", Encoding.UTF8.GetString(rt) == "tagged");
+
+        try
+        {
+            ext.MssObject_UpdateMetadata(proj, email, pem, b1, "meta/tagged.txt", "", "", "", "", null);
+            OK("UpdateMetadata with nothing to update rejected", false, "no exception");
+        }
+        catch (ArgumentException) { OK("UpdateMetadata with nothing to update rejected", true); }
+
+        try
+        {
+            ext.MssObject_UpdateMetadata(proj, email, pem, b1, "meta/missing.txt", "text/plain", "", "", "", null);
+            OK("UpdateMetadata on missing object raises error", false, "no exception");
+        }
+        catch (Exception ex) { OK("UpdateMetadata on missing object raises error", true, ex.Message); }
+
+        // --- delete by prefix (v1.5.0) ---
+        ext.MssObject_Upload(proj, email, pem, b1, "tmp/x1.txt", Encoding.UTF8.GetBytes("1"), "text/plain", null);
+        ext.MssObject_Upload(proj, email, pem, b1, "tmp/x2.txt", Encoding.UTF8.GetBytes("2"), "text/plain", null);
+        ext.MssObject_Upload(proj, email, pem, b1, "tmp/deep/x3.txt", Encoding.UTF8.GetBytes("3"), "text/plain", null);
+
+        long deletedCount;
+        ext.MssObject_DeleteByPrefix(proj, email, pem, b1, "tmp/", out deletedCount);
+        ext.MssObject_Exists(proj, email, pem, b1, "tmp/deep/x3.txt", out exists);
+        bool rootStill;
+        ext.MssObject_Exists(proj, email, pem, b1, "root.txt", out rootStill);
+        OK("DeleteByPrefix deletes the whole 'folder' and counts", deletedCount == 3 && !exists, "count=" + deletedCount);
+        OK("DeleteByPrefix leaves unrelated objects alone", rootStill);
+
+        ext.MssObject_DeleteByPrefix(proj, email, pem, b1, "tmp/", out deletedCount);
+        OK("DeleteByPrefix on empty match -> count 0", deletedCount == 0, "count=" + deletedCount);
+
+        try
+        {
+            ext.MssObject_DeleteByPrefix(proj, email, pem, b1, "  ", out deletedCount);
+            OK("DeleteByPrefix rejects empty prefix", false, "no exception");
+        }
+        catch (ArgumentException) { OK("DeleteByPrefix rejects empty prefix", true); }
 
         // --- cleanup via the extension's own actions ---
         foreach (string bucket in new[] { b1, b2 })

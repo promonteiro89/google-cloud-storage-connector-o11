@@ -775,4 +775,195 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			return true;
 		}
 	} // RCGCS_PrefixRecord
+
+	/// <summary>
+	/// Structure <code>RCGCS_MetadataEntryRecord</code>
+	/// </summary>
+	[Serializable()]
+	public partial struct RCGCS_MetadataEntryRecord: ISerializable, ITypedRecord<RCGCS_MetadataEntryRecord> {
+		internal static readonly GlobalObjectKey IdGCS_MetadataEntry = GlobalObjectKey.Parse("2UmDmepsh0WSfJ_D1JexCA*Ox9eh+c179HTx4jt7eyBlw");
+
+		public static void EnsureInitialized() {}
+		[System.Xml.Serialization.XmlElement("GCS_MetadataEntry")]
+		public STGCS_MetadataEntryStructure ssSTGCS_MetadataEntry;
+
+
+		public static implicit operator STGCS_MetadataEntryStructure(RCGCS_MetadataEntryRecord r) {
+			return r.ssSTGCS_MetadataEntry;
+		}
+
+		public static implicit operator RCGCS_MetadataEntryRecord(STGCS_MetadataEntryStructure r) {
+			RCGCS_MetadataEntryRecord res = new RCGCS_MetadataEntryRecord(null);
+			res.ssSTGCS_MetadataEntry = r;
+			return res;
+		}
+
+		public BitArray OptimizedAttributes;
+
+		public RCGCS_MetadataEntryRecord(params string[] dummy) {
+			OptimizedAttributes = null;
+			ssSTGCS_MetadataEntry = new STGCS_MetadataEntryStructure(null);
+		}
+
+		public BitArray[] GetDefaultOptimizedValues() {
+			BitArray[] all = new BitArray[1];
+			all[0] = null;
+			return all;
+		}
+
+		public BitArray[] AllOptimizedAttributes {
+			set {
+				if (value == null) {
+				} else {
+					ssSTGCS_MetadataEntry.OptimizedAttributes = value[0];
+				}
+			}
+			get {
+				BitArray[] all = new BitArray[1];
+				all[0] = null;
+				return all;
+			}
+		}
+
+		/// <summary>
+		/// Read a record from database
+		/// </summary>
+		/// <param name="r"> Data base reader</param>
+		/// <param name="index"> index</param>
+		public void Read(IDataReader r, ref int index) {
+			ssSTGCS_MetadataEntry.Read(r, ref index);
+		}
+		/// <summary>
+		/// Read from database
+		/// </summary>
+		/// <param name="r"> Data reader</param>
+		public void ReadDB(IDataReader r) {
+			int index = 0;
+			Read(r, ref index);
+		}
+
+		/// <summary>
+		/// Read from record
+		/// </summary>
+		/// <param name="r"> Record</param>
+		public void ReadIM(RCGCS_MetadataEntryRecord r) {
+			this = r;
+		}
+
+
+		public static bool operator == (RCGCS_MetadataEntryRecord a, RCGCS_MetadataEntryRecord b) {
+			if (a.ssSTGCS_MetadataEntry != b.ssSTGCS_MetadataEntry) return false;
+			return true;
+		}
+
+		public static bool operator != (RCGCS_MetadataEntryRecord a, RCGCS_MetadataEntryRecord b) {
+			return !(a==b);
+		}
+
+		public override bool Equals(object o) {
+			if (o.GetType() != typeof(RCGCS_MetadataEntryRecord)) return false;
+			return (this == (RCGCS_MetadataEntryRecord) o);
+		}
+
+		public override int GetHashCode() {
+			try {
+				return base.GetHashCode()
+				^ ssSTGCS_MetadataEntry.GetHashCode()
+				;
+			} catch {
+				return base.GetHashCode();
+			}
+		}
+
+		public void GetObjectData(SerializationInfo info, StreamingContext context) {
+			Type objInfo = this.GetType();
+			FieldInfo[] fields;
+			fields = objInfo.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			for (int i = 0; i < fields.Length; i++)
+			if (fields[i] .FieldType.IsSerializable)
+			info.AddValue(fields[i] .Name, fields[i] .GetValue(this));
+		}
+
+		public RCGCS_MetadataEntryRecord(SerializationInfo info, StreamingContext context) {
+			OptimizedAttributes = null;
+			ssSTGCS_MetadataEntry = new STGCS_MetadataEntryStructure(null);
+			Type objInfo = this.GetType();
+			FieldInfo fieldInfo = null;
+			fieldInfo = objInfo.GetField("ssSTGCS_MetadataEntry", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssSTGCS_MetadataEntry' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssSTGCS_MetadataEntry = (STGCS_MetadataEntryStructure) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+		}
+
+		public void RecursiveReset() {
+			ssSTGCS_MetadataEntry.RecursiveReset();
+		}
+
+		public void InternalRecursiveSave() {
+			ssSTGCS_MetadataEntry.InternalRecursiveSave();
+		}
+
+
+		public RCGCS_MetadataEntryRecord Duplicate() {
+			RCGCS_MetadataEntryRecord t;
+			t.ssSTGCS_MetadataEntry = (STGCS_MetadataEntryStructure) this.ssSTGCS_MetadataEntry.Duplicate();
+			t.OptimizedAttributes = null;
+			return t;
+		}
+
+		IRecord IRecord.Duplicate() {
+			return Duplicate();
+		}
+
+		public void ToXml(Object parent, System.Xml.XmlElement baseElem, String fieldName, int detailLevel) {
+			System.Xml.XmlElement recordElem = VarValue.AppendChild(baseElem, "Record");
+			if (fieldName != null) {
+				VarValue.AppendAttribute(recordElem, "debug.field", fieldName);
+			}
+			if (detailLevel > 0) {
+				ssSTGCS_MetadataEntry.ToXml(this, recordElem, "GCS_MetadataEntry", detailLevel - 1);
+			} else {
+				VarValue.AppendDeferredEvaluationElement(recordElem);
+			}
+		}
+
+		public void EvaluateFields(VarValue variable, Object parent, String baseName, String fields) {
+			String head = VarValue.GetHead(fields);
+			String tail = VarValue.GetTail(fields);
+			variable.Found = false;
+			if (head == "gcs_metadataentry") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".GCS_MetadataEntry")) variable.Value = ssSTGCS_MetadataEntry; else variable.Optimized = true;
+				variable.SetFieldName("gcs_metadataentry");
+			}
+			if (variable.Found && tail != null) variable.EvaluateFields(this, head, tail);
+		}
+
+		public bool ChangedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public bool OptimizedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public object AttributeGet(GlobalObjectKey key) {
+			if (key == IdGCS_MetadataEntry) {
+				return ssSTGCS_MetadataEntry;
+			} else {
+				throw new Exception("Invalid key");
+			}
+		}
+		public void FillFromOther(IRecord other) {
+			if (other == null) return;
+			ssSTGCS_MetadataEntry.FillFromOther((IRecord) other.AttributeGet(IdGCS_MetadataEntry));
+		}
+		public bool IsDefault() {
+			RCGCS_MetadataEntryRecord defaultStruct = new RCGCS_MetadataEntryRecord(null);
+			if (this.ssSTGCS_MetadataEntry != defaultStruct.ssSTGCS_MetadataEntry) return false;
+			return true;
+		}
+	} // RCGCS_MetadataEntryRecord
 }
