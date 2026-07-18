@@ -348,4 +348,88 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 
 
 	} // RLGCS_PrefixRecordList
+
+	/// <summary>
+	/// RecordList type <code>RLGCS_MetadataEntryRecordList</code> that represents a record list of
+	///  <code>GCS_MetadataEntry</code>
+	/// </summary>
+	[Serializable()]
+	public partial class RLGCS_MetadataEntryRecordList: GenericRecordList<RCGCS_MetadataEntryRecord>, IEnumerable, IEnumerator, ISerializable {
+		public static void EnsureInitialized() {}
+
+		protected override RCGCS_MetadataEntryRecord GetElementDefaultValue() {
+			return new RCGCS_MetadataEntryRecord("");
+		}
+
+		public T[] ToArray<T>(Func<RCGCS_MetadataEntryRecord, T> converter) {
+			return ToArray(this, converter);
+		}
+
+		public static T[] ToArray<T>(RLGCS_MetadataEntryRecordList recordlist, Func<RCGCS_MetadataEntryRecord, T> converter) {
+			return InnerToArray(recordlist, converter);
+		}
+		public static implicit operator RLGCS_MetadataEntryRecordList(RCGCS_MetadataEntryRecord[] array) {
+			RLGCS_MetadataEntryRecordList result = new RLGCS_MetadataEntryRecordList();
+			result.InnerFromArray(array);
+			return result;
+		}
+
+		public static RLGCS_MetadataEntryRecordList ToList<T>(T[] array, Func <T, RCGCS_MetadataEntryRecord> converter) {
+			RLGCS_MetadataEntryRecordList result = new RLGCS_MetadataEntryRecordList();
+			result.InnerFromArray(array, converter);
+			return result;
+		}
+
+		public static RLGCS_MetadataEntryRecordList FromRestList<T>(RestList<T> restList, Func <T, RCGCS_MetadataEntryRecord> converter) {
+			RLGCS_MetadataEntryRecordList result = new RLGCS_MetadataEntryRecordList();
+			result.InnerFromRestList(restList, converter);
+			return result;
+		}
+		/// <summary>
+		/// Default Constructor
+		/// </summary>
+		public RLGCS_MetadataEntryRecordList(): base() {
+		}
+
+		/// <summary>
+		/// Constructor with transaction parameter
+		/// </summary>
+		/// <param name="trans"> IDbTransaction Parameter</param>
+		[Obsolete("Use the Default Constructor and set the Transaction afterwards.")]
+		public RLGCS_MetadataEntryRecordList(IDbTransaction trans): base(trans) {
+		}
+
+		/// <summary>
+		/// Constructor with transaction parameter and alternate read method
+		/// </summary>
+		/// <param name="trans"> IDbTransaction Parameter</param>
+		/// <param name="alternateReadDBMethod"> Alternate Read Method</param>
+		[Obsolete("Use the Default Constructor and set the Transaction afterwards.")]
+		public RLGCS_MetadataEntryRecordList(IDbTransaction trans, ReadDBMethodDelegate alternateReadDBMethod): this(trans) {
+			this.alternateReadDBMethod = alternateReadDBMethod;
+		}
+
+		/// <summary>
+		/// Constructor declaration for serialization
+		/// </summary>
+		/// <param name="info"> SerializationInfo</param>
+		/// <param name="context"> StreamingContext</param>
+		public RLGCS_MetadataEntryRecordList(SerializationInfo info, StreamingContext context): base(info, context) {
+		}
+
+		public override BitArray[] GetDefaultOptimizedValues() {
+			BitArray[] def = new BitArray[1];
+			def[0] = null;
+			return def;
+		}
+		/// <summary>
+		/// Create as new list
+		/// </summary>
+		/// <returns>The new record list</returns>
+		protected override OSList<RCGCS_MetadataEntryRecord> NewList() {
+			return new RLGCS_MetadataEntryRecordList();
+		}
+
+
+	} // RLGCS_MetadataEntryRecordList
 }

@@ -1,5 +1,6 @@
 # Google Cloud Storage Connector for OutSystems 11
 
+[![CI](https://github.com/promonteiro89/google-cloud-storage-connector-o11/actions/workflows/ci.yml/badge.svg)](https://github.com/promonteiro89/google-cloud-storage-connector-o11/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/Platform-OutSystems_11-red.svg)](https://www.outsystems.com/)
 [![.NET](https://img.shields.io/badge/.NET_Framework-4.8-blue.svg)](https://dotnet.microsoft.com/download/dotnet-framework/net48)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -86,6 +87,7 @@ Uploads binary content to a bucket. Overwrites the object if it already exists.
 | `ObjectName` | Text | Full path/filename in the bucket |
 | `Content` | Binary Data | File content to upload |
 | `ContentType` | Text | MIME type (e.g. `application/pdf`, `image/png`) |
+| `Metadata` | List of `GCS_MetadataEntry` | Optional custom key-value metadata to store with the object (e.g. user id, tenant, document type) |
 
 #### `Object_Download`
 Downloads an object's content and content type.
@@ -133,6 +135,28 @@ Retrieves an object's full metadata (size, content type, hashes, generation, sto
 | `ObjectName` | In | Text | Full path/filename to inspect |
 | `Exists` | Out | Boolean | True if the object was found |
 | `Metadata` | Out | `GCS_ObjectMetadata` | Full metadata (only populated when `Exists` is True) |
+| `CustomMetadata` | Out | List of `GCS_MetadataEntry` | The object's custom key-value metadata; empty when none |
+
+#### `Object_UpdateMetadata`
+Updates an object's metadata without re-uploading its content. Only the provided fields change; the write is guarded by a metageneration precondition so concurrent updates fail cleanly instead of overwriting each other.
+
+| Parameter | Direction | Type | Description |
+|-----------|-----------|------|-------------|
+| `ProjectId` / `ClientEmail` / `PrivateKey` | In | Text | GCP credentials |
+| `BucketName` | In | Text | Source bucket |
+| `ObjectName` | In | Text | Full path/filename to update |
+| `ContentType` / `ContentEncoding` / `ContentDisposition` / `CacheControl` | In | Text | New values; empty = unchanged |
+| `Metadata` | In | List of `GCS_MetadataEntry` | Custom metadata changes. Empty list = unchanged; an entry with an empty `Value` removes that key, others are set/overwritten |
+
+#### `Object_DeleteByPrefix`
+Deletes all objects whose names start with the given prefix (a "folder" and everything under it).
+
+| Parameter | Direction | Type | Description |
+|-----------|-----------|------|-------------|
+| `ProjectId` / `ClientEmail` / `PrivateKey` | In | Text | GCP credentials |
+| `BucketName` | In | Text | Source bucket |
+| `Prefix` | In | Text | Mandatory and non-empty (safety guard against wiping a whole bucket), e.g. `uploads/2025/` |
+| `DeletedCount` | Out | Long Integer | Number of objects deleted |
 
 #### `Object_Delete`
 Permanently removes an object from a bucket.
@@ -230,6 +254,11 @@ Object metadata (list entry).
 - `Size`: Long Integer
 - `ContentType`: Text
 - `Updated`: Date Time (UTC)
+
+### `GCS_MetadataEntry`
+A single custom metadata key-value pair stored with an object.
+- `Key`: Text (e.g. `department`)
+- `Value`: Text — in `Object_UpdateMetadata`, an empty Value removes the key
 
 ### `GCS_Prefix`
 A folder-style entry returned by `Object_List` when `Delimiter` is set — a common prefix shared by the objects grouped under it.

@@ -17,7 +17,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		/// <param name="ssObjectName">The full path/name of the file (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssContent">The actual file content to be uploaded or the content retrieved during download.</param>
 		/// <param name="ssContentType">The MIME type of the file (e.g., application/pdf, image/png). This helps browsers handle the file correctly when downloaded.</param>
-		void MssObject_Upload(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, byte[] ssContent, string ssContentType);
+		/// <param name="ssMetadata">Optional custom key-value metadata to store with the object (e.g. user id, tenant, document type). Retrievable via Object_GetMetadata.</param>
+		void MssObject_Upload(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, byte[] ssContent, string ssContentType, RLGCS_MetadataEntryRecordList ssMetadata);
 
 		/// <summary>
 		/// Downloads the content and metadata of a specific object from a Google Cloud Storage bucket.
@@ -120,7 +121,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		/// <param name="ssObjectName">The full path/name of the file (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssExists">Returns True if the object was found in the bucket, and False if it does not exist. When False, the Metadata record is returned empty.</param>
 		/// <param name="ssMetadata">The metadata of the object (size, content type, hashes, version identifiers, storage class, and timestamps), retrieved without downloading its content. Only populated when Exists is True.</param>
-		void MssObject_GetMetadata(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, out bool ssExists, out RCGCS_ObjectMetadataRecord ssMetadata);
+		/// <param name="ssCustomMetadata">The object&apos;s custom key-value metadata. Empty when the object has none or does not exist.</param>
+		void MssObject_GetMetadata(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, out bool ssExists, out RCGCS_ObjectMetadataRecord ssMetadata, out RLGCS_MetadataEntryRecordList ssCustomMetadata);
 
 		/// <summary>
 		/// Copies an object to another location, within the same bucket or across buckets, without downloading its content. If the destination object exists, it will be overwritten.
@@ -155,6 +157,32 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssExists">True if the bucket exists and the service account can access it.</param>
 		void MssBucket_Exists(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, out bool ssExists);
+
+		/// <summary>
+		/// Updates an object&apos;s metadata without re-uploading its content. Only the provided fields are changed: empty text inputs leave the corresponding field untouched, and an empty Metadata list leaves custom metadata untouched. Within Metadata, an entry with an empty Value removes that key.
+		/// </summary>
+		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
+		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
+		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
+		/// <param name="ssObjectName">The full path/name of the object to update.</param>
+		/// <param name="ssContentType">New MIME type. Empty = unchanged.</param>
+		/// <param name="ssContentEncoding">New content encoding (e.g. &apos;gzip&apos;). Empty = unchanged.</param>
+		/// <param name="ssContentDisposition">New content disposition (e.g. &apos;attachment; filename=&quot;report.pdf&quot;&apos;). Empty = unchanged.</param>
+		/// <param name="ssCacheControl">New cache control (e.g. &apos;public, max-age=3600&apos;). Empty = unchanged.</param>
+		/// <param name="ssMetadata">Custom metadata changes. Empty list = unchanged. An entry with empty Value removes that key; others are set/overwritten.</param>
+		void MssObject_UpdateMetadata(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, string ssContentType, string ssContentEncoding, string ssContentDisposition, string ssCacheControl, RLGCS_MetadataEntryRecordList ssMetadata);
+
+		/// <summary>
+		/// Deletes all objects whose names start with the given prefix (a &apos;folder&apos; and everything under it). The Prefix is mandatory and cannot be empty, as a safety measure against accidentally wiping an entire bucket. Returns the number of objects deleted.
+		/// </summary>
+		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
+		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
+		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
+		/// <param name="ssPrefix">All objects whose names start with this prefix are deleted (e.g. &apos;uploads/2025/&apos;). Cannot be empty.</param>
+		/// <param name="ssDeletedCount">Number of objects that were deleted.</param>
+		void MssObject_DeleteByPrefix(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssPrefix, out long ssDeletedCount);
 
 	} // IssGoogleCloudStorage_ext
 

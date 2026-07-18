@@ -18,6 +18,105 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 	{
 
 		/// <summary>
+		/// Updates an object&apos;s metadata without re-uploading its content. Only the provided fields are changed: empty text inputs leave the corresponding field untouched, and an empty Metadata list leaves custom metadata untouched. Within Metadata, an entry with an empty Value removes that key.
+		/// </summary>
+		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
+		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
+		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
+		/// <param name="ssObjectName">The full path/name of the object to update.</param>
+		/// <param name="ssContentType">New MIME type. Empty = unchanged.</param>
+		/// <param name="ssContentEncoding">New content encoding (e.g. &apos;gzip&apos;). Empty = unchanged.</param>
+		/// <param name="ssContentDisposition">New content disposition (e.g. &apos;attachment; filename=&quot;report.pdf&quot;&apos;). Empty = unchanged.</param>
+		/// <param name="ssCacheControl">New cache control (e.g. &apos;public, max-age=3600&apos;). Empty = unchanged.</param>
+		/// <param name="ssMetadata">Custom metadata changes. Empty list = unchanged. An entry with empty Value removes that key; others are set/overwritten.</param>
+		public void MssObject_UpdateMetadata(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, string ssContentType, string ssContentEncoding, string ssContentDisposition, string ssCacheControl, RLGCS_MetadataEntryRecordList ssMetadata) {
+			var changes = ToMetadataDictionary(ssMetadata);
+			bool hasFieldChange = !string.IsNullOrEmpty(ssContentType) || !string.IsNullOrEmpty(ssContentEncoding)
+				|| !string.IsNullOrEmpty(ssContentDisposition) || !string.IsNullOrEmpty(ssCacheControl);
+			if (!hasFieldChange && changes == null)
+				throw new ArgumentException("Nothing to update: provide at least one of ContentType, ContentEncoding, ContentDisposition, CacheControl, or a non-empty Metadata list.");
+
+			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+
+			try
+			{
+				// Read-modify-write: fetch the current object, apply only the provided changes, and
+				// write it back guarded by a metageneration precondition so a concurrent metadata
+				// change fails cleanly (412) instead of being silently overwritten.
+				var obj = storageClient.GetObject(ssBucketName, ssObjectName);
+
+				if (!string.IsNullOrEmpty(ssContentType)) obj.ContentType = ssContentType;
+				if (!string.IsNullOrEmpty(ssContentEncoding)) obj.ContentEncoding = ssContentEncoding;
+				if (!string.IsNullOrEmpty(ssContentDisposition)) obj.ContentDisposition = ssContentDisposition;
+				if (!string.IsNullOrEmpty(ssCacheControl)) obj.CacheControl = ssCacheControl;
+
+				if (changes != null)
+				{
+					var merged = obj.Metadata != null ? new Dictionary<string, string>(obj.Metadata) : new Dictionary<string, string>();
+					foreach (var kv in changes)
+					{
+						if (kv.Value.Length == 0) merged.Remove(kv.Key);
+						else merged[kv.Key] = kv.Value;
+					}
+					obj.Metadata = merged;
+				}
+
+				storageClient.UpdateObject(obj, new UpdateObjectOptions { IfMetagenerationMatch = obj.Metageneration });
+			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+		} // MssObject_UpdateMetadata
+
+		/// <summary>
+		/// Deletes all objects whose names start with the given prefix (a &apos;folder&apos; and everything under it). The Prefix is mandatory and cannot be empty, as a safety measure against accidentally wiping an entire bucket. Returns the number of objects deleted.
+		/// </summary>
+		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
+		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
+		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
+		/// <param name="ssPrefix">All objects whose names start with this prefix are deleted (e.g. &apos;uploads/2025/&apos;). Cannot be empty.</param>
+		/// <param name="ssDeletedCount">Number of objects that were deleted.</param>
+		public void MssObject_DeleteByPrefix(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssPrefix, out long ssDeletedCount) {
+			ssDeletedCount = 0;
+			if (string.IsNullOrWhiteSpace(ssPrefix))
+				throw new ArgumentException("Prefix cannot be empty - it would delete every object in the bucket. To do that intentionally, delete the bucket or list and delete the objects explicitly.");
+
+			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+
+			// Materialize the names first so deletions can't interfere with listing pagination.
+			var names = new List<string>();
+			try
+			{
+				foreach (var obj in storageClient.ListObjects(ssBucketName, ssPrefix))
+					names.Add(obj.Name);
+			}
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+
+			long deleted = 0;
+			foreach (var name in names)
+			{
+				try
+				{
+					storageClient.DeleteObject(ssBucketName, name);
+					deleted++;
+				}
+				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+				{
+					// Already gone (deleted concurrently) - the desired state is reached, keep going.
+				}
+				catch (Google.GoogleApiException e)
+				{
+					throw new Exception("Deleted " + deleted + " of " + names.Count + " objects under prefix '" + ssPrefix + "', then failed on '" + name + "': " + e.Message, e);
+				}
+				catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			}
+
+			ssDeletedCount = deleted;
+		} // MssObject_DeleteByPrefix
+
+		/// <summary>
 		/// Checks whether a bucket exists and is accessible to the service account, without listing its contents.
 		/// </summary>
 		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
@@ -102,10 +201,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssObjectName">The full path/name of the file (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssExists">Returns True if the object was found in the bucket, and False if it does not exist. When False, the Metadata record is returned empty.</param>
 		/// <param name="ssMetadata">The metadata of the object (size, content type, hashes, version identifiers, storage class, and timestamps), retrieved without downloading its content. Only populated when Exists is True.</param>
-		public void MssObject_GetMetadata(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, out bool ssExists, out RCGCS_ObjectMetadataRecord ssMetadata) {
+		/// <param name="ssCustomMetadata">The object&apos;s custom key-value metadata. Empty when the object has none or does not exist.</param>
+		public void MssObject_GetMetadata(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, out bool ssExists, out RCGCS_ObjectMetadataRecord ssMetadata, out RLGCS_MetadataEntryRecordList ssCustomMetadata) {
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
 			ssExists = false;
 			ssMetadata = new RCGCS_ObjectMetadataRecord(null);
+			ssCustomMetadata = new RLGCS_MetadataEntryRecordList();
 
 			try
 			{
@@ -128,6 +229,17 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				ssMetadata.ssSTGCS_ObjectMetadata.ssMediaLink = obj.MediaLink;
 				ssMetadata.ssSTGCS_ObjectMetadata.ssTimeCreated = ParseTimestamp(obj.TimeCreatedRaw);
 				ssMetadata.ssSTGCS_ObjectMetadata.ssUpdated = ParseTimestamp(obj.UpdatedRaw);
+
+				if (obj.Metadata != null)
+				{
+					foreach (var kv in obj.Metadata)
+					{
+						var entry = new RCGCS_MetadataEntryRecord(null);
+						entry.ssSTGCS_MetadataEntry.ssKey = kv.Key;
+						entry.ssSTGCS_MetadataEntry.ssValue = kv.Value;
+						ssCustomMetadata.Append(entry);
+					}
+				}
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && !IsBucketNotFound(e))
 			{
@@ -226,6 +338,24 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			if (!string.IsNullOrEmpty(raw) && DateTimeOffset.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out dto))
 				return dto.UtcDateTime;
 			return new DateTime(1900, 1, 1);
+		}
+
+		/// <summary>
+		/// Converts a GCS_MetadataEntry record list to a dictionary. Entries with an empty Key are
+		/// ignored; empty Values are preserved (Object_UpdateMetadata interprets them as key removal).
+		/// Returns null when the list has no usable entries.
+		/// </summary>
+		private static Dictionary<string, string> ToMetadataDictionary(RLGCS_MetadataEntryRecordList list)
+		{
+			if (list == null || list.Length == 0) return null;
+			var dict = new Dictionary<string, string>();
+			foreach (var entry in list.ToArray(r => r))
+			{
+				string key = entry.ssSTGCS_MetadataEntry.ssKey;
+				if (string.IsNullOrEmpty(key)) continue;
+				dict[key] = entry.ssSTGCS_MetadataEntry.ssValue ?? "";
+			}
+			return dict.Count > 0 ? dict : null;
 		}
 
 		/// <summary>
@@ -465,15 +595,24 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssObjectName"></param>
 		/// <param name="ssContent"></param>
 		/// <param name="ssContentType"></param>
-		public void MssObject_Upload(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, byte[] ssContent, string ssContentType)
+		/// <param name="ssMetadata">Optional custom key-value metadata to store with the object. Retrievable via Object_GetMetadata.</param>
+		public void MssObject_Upload(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, byte[] ssContent, string ssContentType, RLGCS_MetadataEntryRecordList ssMetadata)
 		{
 			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
 
 			try
 			{
+				var gcsObject = new Google.Apis.Storage.v1.Data.Object
+				{
+					Bucket = ssBucketName,
+					Name = ssObjectName,
+					ContentType = ssContentType,
+					Metadata = ToMetadataDictionary(ssMetadata)
+				};
+
 				using (var stream = new MemoryStream(ssContent))
 				{
-					storageClient.UploadObject(ssBucketName, ssObjectName, ssContentType, stream);
+					storageClient.UploadObject(gcsObject, stream);
 				}
 			}
 			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }

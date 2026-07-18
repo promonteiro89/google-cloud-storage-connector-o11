@@ -1230,4 +1230,206 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		}
 	} // STGCS_PrefixStructure
 
+	/// <summary>
+	/// Structure <code>STGCS_MetadataEntryStructure</code> that represents the Service Studio structure
+	///  <code>GCS_MetadataEntry</code> <p> Description: A single custom metadata key-value pair stored wit
+	/// h an object. Used by Object_Upload, Object_UpdateMetadata, and returned by Object_GetMetadata.</p>
+	/// </summary>
+	[Serializable()]
+	public partial struct STGCS_MetadataEntryStructure: ISerializable, ITypedRecord<STGCS_MetadataEntryStructure>, ISimpleRecord {
+		internal static readonly GlobalObjectKey IdKey = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*YpuiIPEZlUyBvwYqEePjHA");
+		internal static readonly GlobalObjectKey IdValue = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*nLmU4OtiAUeYDlxpkN6Bkg");
+
+		public static void EnsureInitialized() {}
+		[System.Xml.Serialization.XmlElement("Key")]
+		public string ssKey;
+
+		[System.Xml.Serialization.XmlElement("Value")]
+		public string ssValue;
+
+
+		public BitArray OptimizedAttributes;
+
+		public STGCS_MetadataEntryStructure(params string[] dummy) {
+			OptimizedAttributes = null;
+			ssKey = "";
+			ssValue = "";
+		}
+
+		public BitArray[] GetDefaultOptimizedValues() {
+			BitArray[] all = new BitArray[0];
+			return all;
+		}
+
+		public BitArray[] AllOptimizedAttributes {
+			set {
+				if (value == null) {
+				} else {
+				}
+			}
+			get {
+				BitArray[] all = new BitArray[0];
+				return all;
+			}
+		}
+
+		/// <summary>
+		/// Read a record from database
+		/// </summary>
+		/// <param name="r"> Data base reader</param>
+		/// <param name="index"> index</param>
+		public void Read(IDataReader r, ref int index) {
+			ssKey = r.ReadText(index++, "GCS_MetadataEntry.Key", "");
+			ssValue = r.ReadText(index++, "GCS_MetadataEntry.Value", "");
+		}
+		/// <summary>
+		/// Read from database
+		/// </summary>
+		/// <param name="r"> Data reader</param>
+		public void ReadDB(IDataReader r) {
+			int index = 0;
+			Read(r, ref index);
+		}
+
+		/// <summary>
+		/// Read from record
+		/// </summary>
+		/// <param name="r"> Record</param>
+		public void ReadIM(STGCS_MetadataEntryStructure r) {
+			this = r;
+		}
+
+
+		public static bool operator == (STGCS_MetadataEntryStructure a, STGCS_MetadataEntryStructure b) {
+			if (a.ssKey != b.ssKey) return false;
+			if (a.ssValue != b.ssValue) return false;
+			return true;
+		}
+
+		public static bool operator != (STGCS_MetadataEntryStructure a, STGCS_MetadataEntryStructure b) {
+			return !(a==b);
+		}
+
+		public override bool Equals(object o) {
+			if (o.GetType() != typeof(STGCS_MetadataEntryStructure)) return false;
+			return (this == (STGCS_MetadataEntryStructure) o);
+		}
+
+		public override int GetHashCode() {
+			try {
+				return base.GetHashCode()
+				^ ssKey.GetHashCode()
+				^ ssValue.GetHashCode()
+				;
+			} catch {
+				return base.GetHashCode();
+			}
+		}
+
+		public void GetObjectData(SerializationInfo info, StreamingContext context) {
+			Type objInfo = this.GetType();
+			FieldInfo[] fields;
+			fields = objInfo.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			for (int i = 0; i < fields.Length; i++)
+			if (fields[i] .FieldType.IsSerializable)
+			info.AddValue(fields[i] .Name, fields[i] .GetValue(this));
+		}
+
+		public STGCS_MetadataEntryStructure(SerializationInfo info, StreamingContext context) {
+			OptimizedAttributes = null;
+			ssKey = "";
+			ssValue = "";
+			Type objInfo = this.GetType();
+			FieldInfo fieldInfo = null;
+			fieldInfo = objInfo.GetField("ssKey", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssKey' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssKey = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssValue", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssValue' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssValue = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+		}
+
+		public void RecursiveReset() {
+		}
+
+		public void InternalRecursiveSave() {
+		}
+
+
+		public STGCS_MetadataEntryStructure Duplicate() {
+			STGCS_MetadataEntryStructure t;
+			t.ssKey = this.ssKey;
+			t.ssValue = this.ssValue;
+			t.OptimizedAttributes = null;
+			return t;
+		}
+
+		IRecord IRecord.Duplicate() {
+			return Duplicate();
+		}
+
+		public void ToXml(Object parent, System.Xml.XmlElement baseElem, String fieldName, int detailLevel) {
+			System.Xml.XmlElement recordElem = VarValue.AppendChild(baseElem, "Structure");
+			if (fieldName != null) {
+				VarValue.AppendAttribute(recordElem, "debug.field", fieldName);
+				fieldName = fieldName.ToLowerInvariant();
+			}
+			if (detailLevel > 0) {
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".Key")) VarValue.AppendAttribute(recordElem, "Key", ssKey, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "Key");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".Value")) VarValue.AppendAttribute(recordElem, "Value", ssValue, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "Value");
+			} else {
+				VarValue.AppendDeferredEvaluationElement(recordElem);
+			}
+		}
+
+		public void EvaluateFields(VarValue variable, Object parent, String baseName, String fields) {
+			String head = VarValue.GetHead(fields);
+			String tail = VarValue.GetTail(fields);
+			variable.Found = false;
+			if (head == "key") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".Key")) variable.Value = ssKey; else variable.Optimized = true;
+			} else if (head == "value") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".Value")) variable.Value = ssValue; else variable.Optimized = true;
+			}
+			if (variable.Found && tail != null) variable.EvaluateFields(this, head, tail);
+		}
+
+		public bool ChangedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public bool OptimizedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public object AttributeGet(GlobalObjectKey key) {
+			if (key == IdKey) {
+				return ssKey;
+			} else if (key == IdValue) {
+				return ssValue;
+			} else {
+				throw new Exception("Invalid key");
+			}
+		}
+		public void FillFromOther(IRecord other) {
+			if (other == null) return;
+			ssKey = (string) other.AttributeGet(IdKey);
+			ssValue = (string) other.AttributeGet(IdValue);
+		}
+		public bool IsDefault() {
+			STGCS_MetadataEntryStructure defaultStruct = new STGCS_MetadataEntryStructure(null);
+			if (this.ssKey != defaultStruct.ssKey) return false;
+			if (this.ssValue != defaultStruct.ssValue) return false;
+			return true;
+		}
+	} // STGCS_MetadataEntryStructure
+
 } // OutSystems.NssGoogleCloudStorage_ext
