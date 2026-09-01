@@ -38,22 +38,22 @@
     <GenerateSerializationAssemblies>Off</GenerateSerializationAssemblies>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Google.Api.Gax, Version=4.14.0.0, Culture=neutral, PublicKeyToken=3ec5ea7f18953e47, processorArchitecture=MSIL">
+    <Reference Include="Google.Api.Gax, Version=4.15.0.0, Culture=neutral, PublicKeyToken=3ec5ea7f18953e47, processorArchitecture=MSIL">
       <HintPath>bin\Google.Api.Gax.dll</HintPath>
     </Reference>
-    <Reference Include="Google.Api.Gax.Rest, Version=4.14.0.0, Culture=neutral, PublicKeyToken=3ec5ea7f18953e47, processorArchitecture=MSIL">
+    <Reference Include="Google.Api.Gax.Rest, Version=4.15.0.0, Culture=neutral, PublicKeyToken=3ec5ea7f18953e47, processorArchitecture=MSIL">
       <HintPath>bin\Google.Api.Gax.Rest.dll</HintPath>
     </Reference>
-    <Reference Include="Google.Apis, Version=1.74.0.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
+    <Reference Include="Google.Apis, Version=1.76.0.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
       <HintPath>bin\Google.Apis.dll</HintPath>
     </Reference>
-    <Reference Include="Google.Apis.Auth, Version=1.74.0.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
+    <Reference Include="Google.Apis.Auth, Version=1.76.0.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
       <HintPath>bin\Google.Apis.Auth.dll</HintPath>
     </Reference>
-    <Reference Include="Google.Apis.Core, Version=1.74.0.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
+    <Reference Include="Google.Apis.Core, Version=1.76.0.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
       <HintPath>bin\Google.Apis.Core.dll</HintPath>
     </Reference>
-    <Reference Include="Google.Apis.Storage.v1, Version=1.74.0.4161, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
+    <Reference Include="Google.Apis.Storage.v1, Version=1.76.0.4250, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
       <HintPath>bin\Google.Apis.Storage.v1.dll</HintPath>
     </Reference>
     <Reference Include="Google.Cloud.Storage.V1, Version=4.15.0.0, Culture=neutral, PublicKeyToken=185c282632e132a0, processorArchitecture=MSIL">

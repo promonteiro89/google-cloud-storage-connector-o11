@@ -5,7 +5,29 @@
     </assembly>
     <members>
         <member name="T:Google.ApplicationContext">
-            <summary>Defines the context in which this library runs. It allows setting up custom loggers.</summary>
+            <summary>Defines the context in which this library runs. It allows setting up custom loggers and performance options.</summary>
+        </member>
+        <member name="P:Google.ApplicationContext.EnableRequestParameterCache">
+            <summary>
+            Gets or sets whether to enable caching of request parameter descriptors per request type.
+            </summary>
+            <remarks>
+            <para>
+            When enabled, <see cref="T:System.Reflection.PropertyInfo"/> lookups for request parameter
+            properties are cached per request type, eliminating repeated reflection overhead.
+            </para>
+            <para>
+            Default is <c>false</c>. Set to <c>true</c> early in application startup before making
+            any API requests. This setting is intended for applications that make many requests and
+            where reflection overhead has been identified as a bottleneck.
+            </para>
+            </remarks>
+        </member>
+        <member name="P:Google.ApplicationContext.RequestParameterProvider">
+            <summary>
+            The provider used to obtain request parameter description information from a given type.
+            <see cref="P:Google.ApplicationContext.EnableRequestParameterCache"/> for more information.
+            </summary>
         </member>
         <member name="P:Google.ApplicationContext.Logger">
             <summary>Returns the logger used within this application context.</summary>
@@ -1761,6 +1783,23 @@
             <summary>
             A group of user-defined parameters that will be added in to the query portion of the request URI. If this
             type is being used, the name of the RequestParameterAttirbute is meaningless.
+            </summary>
+        </member>
+        <member name="T:Google.Apis.Util.RequestParameterDescriptorProvider">
+            <summary>
+            Cached and uncached request parameter descriptor provider.
+            </summary>
+        </member>
+        <member name="M:Google.Apis.Util.RequestParameterDescriptorProvider.GetCachedRequestParameterProperties(System.Type)">
+            <summary>
+            Returns cached <see cref="T:System.Reflection.PropertyInfo"/> for all properties of <paramref name="type"/> that are request parameters,
+            that is, are marked with <see cref="T:Google.Apis.Util.RequestParameterAttribute"/>.
+            </summary>
+        </member>
+        <member name="M:Google.Apis.Util.RequestParameterDescriptorProvider.GetUncachedRequestParameterProperties(System.Type)">
+            <summary>
+            Returns uncached <see cref="T:System.Reflection.PropertyInfo"/> for all properties of <paramref name="type"/> that are request parameters,
+            that is, are marked with <see cref="T:Google.Apis.Util.RequestParameterAttribute"/>.
             </summary>
         </member>
         <member name="T:Google.Apis.Util.StandardResponse`1">

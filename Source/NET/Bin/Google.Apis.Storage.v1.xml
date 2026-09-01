@@ -110,6 +110,9 @@
         <member name="P:Google.Apis.Storage.v1.StorageService.Projects">
             <summary>Gets the Projects resource.</summary>
         </member>
+        <member name="P:Google.Apis.Storage.v1.StorageService.RapidCaches">
+            <summary>Gets the RapidCaches resource.</summary>
+        </member>
         <member name="T:Google.Apis.Storage.v1.StorageBaseServiceRequest`1">
             <summary>A base abstract class for Storage requests.</summary>
         </member>
@@ -2234,6 +2237,54 @@
         <member name="M:Google.Apis.Storage.v1.ManagedFoldersResource.TestIamPermissionsRequest.InitParameters">
             <summary>Initializes TestIamPermissions parameter list.</summary>
         </member>
+        <member name="M:Google.Apis.Storage.v1.ManagedFoldersResource.Update(Google.Apis.Storage.v1.Data.ManagedFolder,System.String,System.String)">
+            <summary>Updates a managed folder using patch semantics.</summary>
+            <param name="body">The body of the request.</param>
+            <param name="bucket">The name of the bucket containing the managed folder.</param>
+            <param name="managedFolder">The name of the managed folder.</param>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest">
+            <summary>Updates a managed folder using patch semantics.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.#ctor(Google.Apis.Services.IClientService,Google.Apis.Storage.v1.Data.ManagedFolder,System.String,System.String)">
+            <summary>Constructs a new Update request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.Bucket">
+            <summary>The name of the bucket containing the managed folder.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.ManagedFolder">
+            <summary>The name of the managed folder.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.IfMetagenerationMatch">
+            <summary>
+            Makes the operation conditional on whether the metageneration of the managed folder matches the
+            specified value.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.IfMetagenerationNotMatch">
+            <summary>
+            Makes the operation conditional on whether the metageneration of the managed folder doesn't match the
+            specified value.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.Body">
+            <summary>Gets or sets the body of this request.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.GetBody">
+            <summary>Returns the body of the request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.MethodName">
+            <summary>Gets the method name.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.HttpMethod">
+            <summary>Gets the HTTP method.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.RestPath">
+            <summary>Gets the REST path.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.ManagedFoldersResource.UpdateRequest.InitParameters">
+            <summary>Initializes Update parameter list.</summary>
+        </member>
         <member name="T:Google.Apis.Storage.v1.NotificationsResource">
             <summary>The "notifications" collection of methods.</summary>
         </member>
@@ -2795,8 +2846,11 @@
         </member>
         <member name="P:Google.Apis.Storage.v1.ObjectsResource.ComposeRequest.DropContextGroups">
             <summary>
-            Specifies which groups of Object Contexts from the source object(s) should be dropped from the
-            destination object.
+            Specifies which object context groups to drop from the source object(s) during a compose operation. The
+            accepted value is 'custom'. Destination contexts behave as follows: - When request body contexts are
+            provided, they override all source contexts. - When no request body contexts are provided, source
+            contexts are preserved unless 'dropContextGroups' contains 'custom', in which case all contexts are
+            dropped.
             </summary>
         </member>
         <member name="P:Google.Apis.Storage.v1.ObjectsResource.ComposeRequest.IfGenerationMatch">
@@ -4106,8 +4160,11 @@
         </member>
         <member name="P:Google.Apis.Storage.v1.ObjectsResource.RewriteRequest.DropContextGroups">
             <summary>
-            Specifies which groups of Object Contexts from the source object should be dropped from the destination
-            object.
+            Specifies which object context groups to drop from the source object during a copy operation. The
+            accepted value is 'custom'. Destination contexts behave as follows: - When request body contexts are
+            provided, they override all source contexts. - When no request body contexts are provided, source
+            contexts are preserved unless 'dropContextGroups' contains 'custom', in which case all contexts are
+            dropped.
             </summary>
         </member>
         <member name="P:Google.Apis.Storage.v1.ObjectsResource.RewriteRequest.IfGenerationMatch">
@@ -4439,100 +4496,6 @@
         </member>
         <member name="M:Google.Apis.Storage.v1.ObjectsResource.UpdateRequest.InitParameters">
             <summary>Initializes Update parameter list.</summary>
-        </member>
-        <member name="M:Google.Apis.Storage.v1.ObjectsResource.WatchAll(Google.Apis.Storage.v1.Data.Channel,System.String)">
-            <summary>Watch for changes on all objects in a bucket.</summary>
-            <param name="body">The body of the request.</param>
-            <param name="bucket">Name of the bucket in which to look for objects.</param>
-        </member>
-        <member name="T:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest">
-            <summary>Watch for changes on all objects in a bucket.</summary>
-        </member>
-        <member name="M:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.#ctor(Google.Apis.Services.IClientService,Google.Apis.Storage.v1.Data.Channel,System.String)">
-            <summary>Constructs a new WatchAll request.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.Bucket">
-            <summary>Name of the bucket in which to look for objects.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.Delimiter">
-            <summary>
-            Returns results in a directory-like mode. items will contain only objects whose names, aside from the
-            prefix, do not contain delimiter. Objects whose names, aside from the prefix, contain delimiter will
-            have their name, truncated after the delimiter, returned in prefixes. Duplicate prefixes are omitted.
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.EndOffset">
-            <summary>
-            Filter results to objects whose names are lexicographically before endOffset. If startOffset is also
-            set, the objects listed will have names between startOffset (inclusive) and endOffset (exclusive).
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.IncludeTrailingDelimiter">
-            <summary>
-            If true, objects that end in exactly one instance of delimiter will have their metadata included in
-            items in addition to prefixes.
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.MaxResults">
-            <summary>
-            Maximum number of items plus prefixes to return in a single page of responses. As duplicate prefixes are
-            omitted, fewer total results may be returned than requested. The service will use this parameter or
-            1,000 items, whichever is smaller.
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.PageToken">
-            <summary>
-            A previously-returned page token representing part of the larger set of results to view.
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.Prefix">
-            <summary>Filter results to objects whose names begin with this prefix.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.Projection">
-            <summary>Set of properties to return. Defaults to noAcl.</summary>
-        </member>
-        <member name="T:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.ProjectionEnum">
-            <summary>Set of properties to return. Defaults to noAcl.</summary>
-        </member>
-        <member name="F:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.ProjectionEnum.Full">
-            <summary>Include all properties.</summary>
-        </member>
-        <member name="F:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.ProjectionEnum.NoAcl">
-            <summary>Omit the owner, acl property.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.StartOffset">
-            <summary>
-            Filter results to objects whose names are lexicographically equal to or after startOffset. If endOffset
-            is also set, the objects listed will have names between startOffset (inclusive) and endOffset
-            (exclusive).
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.UserProject">
-            <summary>The project to be billed for this request. Required for Requester Pays buckets.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.Versions">
-            <summary>
-            If true, lists all versions of an object as distinct results. The default is false. For more
-            information, see [Object Versioning](https://cloud.google.com/storage/docs/object-versioning).
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.Body">
-            <summary>Gets or sets the body of this request.</summary>
-        </member>
-        <member name="M:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.GetBody">
-            <summary>Returns the body of the request.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.MethodName">
-            <summary>Gets the method name.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.HttpMethod">
-            <summary>Gets the HTTP method.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.RestPath">
-            <summary>Gets the REST path.</summary>
-        </member>
-        <member name="M:Google.Apis.Storage.v1.ObjectsResource.WatchAllRequest.InitParameters">
-            <summary>Initializes WatchAll parameter list.</summary>
         </member>
         <member name="T:Google.Apis.Storage.v1.OperationsResource">
             <summary>The "operations" collection of methods.</summary>
@@ -4943,6 +4906,174 @@
         </member>
         <member name="M:Google.Apis.Storage.v1.ProjectsResource.ServiceAccountResource.GetRequest.InitParameters">
             <summary>Initializes Get parameter list.</summary>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.RapidCachesResource">
+            <summary>The "rapidCaches" collection of methods.</summary>
+        </member>
+        <member name="F:Google.Apis.Storage.v1.RapidCachesResource.service">
+            <summary>The service which this resource belongs to.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.#ctor(Google.Apis.Services.IClientService)">
+            <summary>Constructs a new resource.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.Disable(System.String,System.String)">
+            <summary>Disables a Rapid Cache instance.</summary>
+            <param name="bucket">Name of the parent bucket.</param>
+            <param name="rapidCacheId">The ID of the requested Rapid Cache instance.</param>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.RapidCachesResource.DisableRequest">
+            <summary>Disables a Rapid Cache instance.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.DisableRequest.#ctor(Google.Apis.Services.IClientService,System.String,System.String)">
+            <summary>Constructs a new Disable request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.DisableRequest.Bucket">
+            <summary>Name of the parent bucket.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.DisableRequest.RapidCacheId">
+            <summary>The ID of the requested Rapid Cache instance.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.DisableRequest.MethodName">
+            <summary>Gets the method name.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.DisableRequest.HttpMethod">
+            <summary>Gets the HTTP method.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.DisableRequest.RestPath">
+            <summary>Gets the REST path.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.DisableRequest.InitParameters">
+            <summary>Initializes Disable parameter list.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.Get(System.String,System.String)">
+            <summary>Returns the metadata of a Rapid Cache instance.</summary>
+            <param name="bucket">Name of the parent bucket.</param>
+            <param name="rapidCacheId">The ID of the requested Rapid Cache instance.</param>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.RapidCachesResource.GetRequest">
+            <summary>Returns the metadata of a Rapid Cache instance.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.GetRequest.#ctor(Google.Apis.Services.IClientService,System.String,System.String)">
+            <summary>Constructs a new Get request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.GetRequest.Bucket">
+            <summary>Name of the parent bucket.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.GetRequest.RapidCacheId">
+            <summary>The ID of the requested Rapid Cache instance.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.GetRequest.MethodName">
+            <summary>Gets the method name.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.GetRequest.HttpMethod">
+            <summary>Gets the HTTP method.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.GetRequest.RestPath">
+            <summary>Gets the REST path.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.GetRequest.InitParameters">
+            <summary>Initializes Get parameter list.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.Insert(Google.Apis.Storage.v1.Data.RapidCache,System.String)">
+            <summary>Creates a Rapid Cache instance.</summary>
+            <param name="body">The body of the request.</param>
+            <param name="bucket">Name of the parent bucket.</param>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.RapidCachesResource.InsertRequest">
+            <summary>Creates a Rapid Cache instance.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.InsertRequest.#ctor(Google.Apis.Services.IClientService,Google.Apis.Storage.v1.Data.RapidCache,System.String)">
+            <summary>Constructs a new Insert request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.InsertRequest.Bucket">
+            <summary>Name of the parent bucket.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.InsertRequest.Body">
+            <summary>Gets or sets the body of this request.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.InsertRequest.GetBody">
+            <summary>Returns the body of the request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.InsertRequest.MethodName">
+            <summary>Gets the method name.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.InsertRequest.HttpMethod">
+            <summary>Gets the HTTP method.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.InsertRequest.RestPath">
+            <summary>Gets the REST path.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.InsertRequest.InitParameters">
+            <summary>Initializes Insert parameter list.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.List(System.String)">
+            <summary>Returns a list of Rapid Cache instances of the bucket.</summary>
+            <param name="bucket">Name of the parent bucket.</param>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.RapidCachesResource.ListRequest">
+            <summary>Returns a list of Rapid Cache instances of the bucket.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.ListRequest.#ctor(Google.Apis.Services.IClientService,System.String)">
+            <summary>Constructs a new List request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.ListRequest.Bucket">
+            <summary>Name of the parent bucket.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.ListRequest.PageSize">
+            <summary>Maximum number of items to return in a single page of responses.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.ListRequest.PageToken">
+            <summary>
+            A previously-returned page token representing part of the larger set of results to view.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.ListRequest.MethodName">
+            <summary>Gets the method name.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.ListRequest.HttpMethod">
+            <summary>Gets the HTTP method.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.ListRequest.RestPath">
+            <summary>Gets the REST path.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.ListRequest.InitParameters">
+            <summary>Initializes List parameter list.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.Update(Google.Apis.Storage.v1.Data.RapidCache,System.String,System.String)">
+            <summary>Updates the configuration of a Rapid Cache instance.</summary>
+            <param name="body">The body of the request.</param>
+            <param name="bucket">Name of the parent bucket.</param>
+            <param name="rapidCacheId">The ID of the requested Rapid Cache instance.</param>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest">
+            <summary>Updates the configuration of a Rapid Cache instance.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest.#ctor(Google.Apis.Services.IClientService,Google.Apis.Storage.v1.Data.RapidCache,System.String,System.String)">
+            <summary>Constructs a new Update request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest.Bucket">
+            <summary>Name of the parent bucket.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest.RapidCacheId">
+            <summary>The ID of the requested Rapid Cache instance.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest.Body">
+            <summary>Gets or sets the body of this request.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest.GetBody">
+            <summary>Returns the body of the request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest.MethodName">
+            <summary>Gets the method name.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest.HttpMethod">
+            <summary>Gets the HTTP method.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest.RestPath">
+            <summary>Gets the REST path.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.RapidCachesResource.UpdateRequest.InitParameters">
+            <summary>Initializes Update parameter list.</summary>
         </member>
         <member name="T:Google.Apis.Storage.v1.Data.AdvanceRelocateBucketOperationRequest">
             <summary>An AdvanceRelocateBucketOperation request.</summary>
@@ -6368,6 +6499,9 @@
         <member name="P:Google.Apis.Storage.v1.Data.ManagedFolder.Name">
             <summary>The name of the managed folder. Required if not specified by URL parameter.</summary>
         </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ManagedFolder.RapidCacheConfig">
+            <summary>The rapid cache configuration for the managed folder.</summary>
+        </member>
         <member name="P:Google.Apis.Storage.v1.Data.ManagedFolder.SelfLink">
             <summary>The link to this managed folder.</summary>
         </member>
@@ -6945,6 +7079,112 @@
             roles/storage.legacyBucketOwner - Read and write access to existing buckets with object
             listing/creation/deletion. Equivalent to an ACL entry on a bucket with the OWNER role.
             </summary>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.Data.RapidCache">
+            <summary>A Rapid Cache instance.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.AdmissionPolicy">
+            <summary>The cache-level entry admission policy.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.Bucket">
+            <summary>The name of the bucket containing this cache instance.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.CacheType">
+            <summary>
+            The type of Rapid Cache this represents. Valid values include: "rapid-cache" and "rapid-cache-ultra".
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.CreateTimeRaw">
+            <summary>The creation time of the cache instance in RFC 3339 format.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.CreateTimeDateTimeOffset">
+            <summary><seealso cref="T:System.DateTimeOffset"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.RapidCache.CreateTimeRaw"/>.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.CreateTime">
+            <summary><seealso cref="T:System.DateTime"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.RapidCache.CreateTimeRaw"/>.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.Id">
+            <summary>The ID of the resource, including the project number, bucket name and rapid cache ID.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.IngestOnWrite">
+            <summary>Specifies whether objects are ingested into the cache upon write.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.Kind">
+            <summary>The kind of item this is. For Rapid Cache, this is always storage#rapidCache.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.PendingUpdate">
+            <summary>True if the cache instance has an active Update long-running operation.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.RapidCacheId">
+            <summary>The ID of the Rapid cache instance.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.SelfLink">
+            <summary>The link to this cache instance.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.State">
+            <summary>The current state of the cache instance.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.Ttl">
+            <summary>The TTL of all cache entries in whole seconds. e.g., "7200s".</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.UpdateTimeRaw">
+            <summary>The modification time of the cache instance metadata in RFC 3339 format.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.UpdateTimeDateTimeOffset">
+            <summary><seealso cref="T:System.DateTimeOffset"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.RapidCache.UpdateTimeRaw"/>.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.UpdateTime">
+            <summary><seealso cref="T:System.DateTime"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.RapidCache.UpdateTimeRaw"/>.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.Zone">
+            <summary>The zone in which the cache instance is running. For example, us-central1-a.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCache.ETag">
+            <summary>The ETag of the item.</summary>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.Data.RapidCacheConfig">
+            <summary>Configuration options for the rapid cache of a managed folder.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCacheConfig.Policies">
+            <summary>
+            A map of rapid cache IDs to the corresponding `RapidCachePolicy` configurations for a managed folder.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCacheConfig.ETag">
+            <summary>The ETag of the item.</summary>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.Data.RapidCachePolicy">
+            <summary>The rapid cache policy configuration for a managed folder.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCachePolicy.IngestOnWrite">
+            <summary>
+            The ingest-on-write policy for objects in the managed folder. When set to `enabled`, objects are
+            automatically ingested into the cache when they are written to the managed folder.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCachePolicy.RapidCacheId">
+            <summary>The unique identifier of the rapid cache.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCachePolicy.ETag">
+            <summary>The ETag of the item.</summary>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.Data.RapidCaches">
+            <summary>A list of Rapid Caches.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCaches.Items">
+            <summary>The list of items.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCaches.Kind">
+            <summary>The kind of item this is. For lists of Rapid Caches, this is always storage#rapidCaches.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCaches.NextPageToken">
+            <summary>
+            The continuation token, used to page through large result sets. Provide this value in a subsequent request
+            to return the next page of results.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.RapidCaches.ETag">
+            <summary>The ETag of the item.</summary>
         </member>
         <member name="T:Google.Apis.Storage.v1.Data.RelocateBucketRequest">
             <summary>A Relocate Bucket request.</summary>
