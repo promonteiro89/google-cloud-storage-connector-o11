@@ -1,8 +1,19 @@
 name: NuGet update watch
 
-# Opens an issue when Google publishes a new stable Google.Cloud.Storage.V1,
-# so the bundled SDK never silently ages. Dependencies live as DLLs in
-# Source/NET/Bin (no PackageReference), so Dependabot can't watch them.
+# Opens an issue when any bundled Google.* package has a newer stable release on
+# NuGet, so the SDK never silently ages. Dependencies live as plain DLLs in
+# Source/NET/Bin (no PackageReference), so Dependabot cannot track them.
+#
+# Every Google.* <Reference> in the csproj is checked, not just the headline
+# Google.Cloud.Storage.V1 package: the transitive packages (Google.Apis.*,
+# Google.Api.Gax*) release on their own cadence and drifted two versions behind
+# while Storage.V1 itself stayed put.
+#
+# Not watched on purpose:
+#   Newtonsoft.Json  - Integration Studio replaces it with the OutSystems
+#                      platform's own copy at publish time.
+#   System.* / Microsoft.*  - satisfied well above the SDK's minimums and
+#                      pinned by what the platform provides.
 
 on:
   schedule:
@@ -19,41 +30,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compare bundled SDK version with latest on NuGet
+      - name: Compare every bundled Google.* package with the latest on NuGet
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          LATEST=$(curl -s https://api.nuget.org/v3-flatcontainer/google.cloud.storage.v1/index.json \
-            | jq -r '[.versions[] | select(test("-") | not)] | last')
-          CURRENT=$(grep -oP 'Google\.Cloud\.Storage\.V1, Version=\K[0-9]+\.[0-9]+\.[0-9]+' \
-            Source/NET/GoogleCloudStorage_ext.csproj)
-          echo "bundled: $CURRENT   latest stable: $LATEST"
+          CSPROJ=Source/NET/GoogleCloudStorage_ext.csproj
+          OUTDATED=""
 
-          if [ "$LATEST" = "$CURRENT" ]; then
-            echo "Up to date."
+          # "Name|Version" for every Google.* assembly reference in the csproj
+          while IFS='|' read -r NAME CURRENT; do
+            [ -z "$NAME" ] && continue
+            PKG=$(echo "$NAME" | tr '[:upper:]' '[:lower:]')
+            LATEST=$(curl -sf "https://api.nuget.org/v3-flatcontainer/$PKG/index.json" \
+              | jq -r '[.versions[] | select(test("-") | not)] | last') || {
+                echo "::warning::could not query NuGet for $NAME"; continue; }
+
+            # csproj carries 4-part assembly versions (1.76.0.0); NuGet often
+            # publishes 3-part (1.76.0). Treat "X.Y.Z" and "X.Y.Z.0" as equal.
+            if [ "$LATEST" = "$CURRENT" ] || [ "$LATEST.0" = "$CURRENT" ]; then
+              echo "OK        $NAME $CURRENT"
+              continue
+            fi
+            if [ "$(printf '%s\n' "$CURRENT" "$LATEST" | sort -V | tail -1)" = "$CURRENT" ]; then
+              echo "OK        $NAME $CURRENT (newer than published $LATEST)"
+              continue
+            fi
+            echo "OUTDATED  $NAME $CURRENT -> $LATEST"
+            OUTDATED="${OUTDATED}- \`$NAME\`: **$CURRENT** -> **$LATEST**"$'\n'
+          done < <(grep -oP '<Reference Include="\KGoogle[^,]*, Version=[0-9.]+' "$CSPROJ" \
+                   | sed 's/, Version=/|/')
+
+          if [ -z "$OUTDATED" ]; then
+            echo "All bundled Google packages are up to date."
             exit 0
           fi
-          if [ "$(printf '%s\n' "$CURRENT" "$LATEST" | sort -V | tail -1)" = "$CURRENT" ]; then
-            echo "Bundled version is newer than or equal to latest stable — nothing to do."
-            exit 0
-          fi
 
-          TITLE="Update Google.Cloud.Storage.V1 to $LATEST (bundled: $CURRENT)"
-          if gh issue list --state open --search "in:title \"$LATEST\"" --json title --jq '.[].title' | grep -qF "$LATEST"; then
-            echo "Issue for $LATEST already exists."
-            exit 0
-          fi
+          # One open issue at a time; refresh its body if the set changed.
+          TITLE="Update bundled Google Cloud Storage SDK packages"
+          BODY="Newer stable releases are available for packages bundled in \`Source/NET/Bin\`:
 
-          gh issue create --title "$TITLE" --body "$(cat <<EOF
-          NuGet has a newer stable **Google.Cloud.Storage.V1: $LATEST** (this repo bundles **$CURRENT**).
-
+          $OUTDATED
           Update steps (see CONTRIBUTING.md):
-          1. Download the new package (net462 asset) plus any bumped transitive Google.* dependencies.
-          2. Replace the DLL/XML pairs in \`Source/NET/Bin/\` and update the \`<Reference>\` versions in \`GoogleCloudStorage_ext.csproj\`.
-          3. Build and run \`tests/run-tests.ps1\` — all checks must pass.
+          1. Download each package's \`net462\` asset and replace the DLL/XML pair in \`Source/NET/Bin/\`.
+          2. Update the matching \`<Reference ... Version=...>\` in \`GoogleCloudStorage_ext.csproj\`.
+          3. Build and run \`tests/run-tests.ps1\` - all checks must pass.
           4. Republish via Integration Studio.
 
-          Release notes: https://github.com/googleapis/google-cloud-dotnet/releases
-          EOF
-          )"
+          Release notes: https://github.com/googleapis/google-cloud-dotnet/releases"
+
+          EXISTING=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --body "$BODY"
+            echo "Updated existing issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
