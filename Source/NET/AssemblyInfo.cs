@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Reflection;
 using System.Resources;
 using System.Runtime.CompilerServices;
@@ -16,8 +16,8 @@ using System.Runtime.InteropServices;
 [assembly: ComVisible(false)]
 [assembly: CLSCompliantAttribute(false)]
 
-[assembly: AssemblyVersion("11.41.0.46924")]
-[assembly: AssemblyFileVersion("11.41.0.46924")]
+[assembly: AssemblyVersion("11.42.1.47790")]
+[assembly: AssemblyFileVersion("11.42.1.47790")]
 
 [assembly: NeutralResourcesLanguage("")]
 

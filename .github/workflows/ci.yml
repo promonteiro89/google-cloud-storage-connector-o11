@@ -61,7 +61,61 @@ jobs:
 
       # Windows PowerShell 5.1 (shell: powershell) is required: the harness must run on
       # .NET Framework 4.8, the extension's actual runtime. pwsh (7.x) would be .NET Core.
-      - name: Run test suite (49 checks, emulator + offline)
+      - name: Run test suite (offline + emulator integration + federation contract)
         if: env.OS_DEPS_KEY != ''
         shell: powershell
-        run: .\tests\run-tests.ps1 -Download
+        run: .\tests\run-tests.ps1 -Download -Category Default
+
+  live-federation:
+    # Keyless, against REAL Google Cloud: this workflow's GitHub OIDC token is exchanged through
+    # Workload Identity Federation for the sandbox service account. No Google key is involved; the
+    # GCP_* values are plain repository variables. The only secret is the read-only deploy key that
+    # fetches the proprietary OutSystems assemblies needed to compile. Fork PRs get neither an
+    # id-token nor the variables or secret, so the job only runs for pushes and same-repo PRs.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      OS_DEPS_KEY: ${{ secrets.OS_DEPS_SSH_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check live configuration
+        shell: powershell
+        run: |
+          # Fail loudly: without these the live tests would report SKIPPED, and a skipped live run must never look green.
+          $missing = @('GCP_WIF_PROVIDER', 'GCP_SERVICE_ACCOUNT', 'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'OS_DEPS_KEY') |
+            Where-Object { [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_)) }
+          if ($missing) {
+            $missing | ForEach-Object { Write-Host "::error::$_ is not set (repository variable, secret, or id-token permission missing)" }
+            exit 1
+          }
+
+      - name: Fetch OutSystems platform assemblies (private, read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: promonteiro89/outsystems-platform-deps
+          ssh-key: ${{ secrets.OS_DEPS_SSH_KEY }}
+          path: os-deps
+
+      - name: Place platform assemblies in Bin
+        shell: powershell
+        run: Copy-Item os-deps\*.dll Source\NET\Bin\ -Force
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build extension (.NET Framework 4.8)
+        shell: powershell
+        run: |
+          msbuild Source\NET\GoogleCloudStorage_ext.csproj /p:Configuration=Release /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Live Workload Identity Federation tests (real Google Cloud)
+        shell: powershell
+        run: .\tests\run-tests.ps1 -Category Live

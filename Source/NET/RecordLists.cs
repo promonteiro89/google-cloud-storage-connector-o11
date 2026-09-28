@@ -432,4 +432,88 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 
 
 	} // RLGCS_MetadataEntryRecordList
+
+	/// <summary>
+	/// RecordList type <code>RLGCS_AuthenticationRecordList</code> that represents a record list of
+	///  <code>GCS_Authentication</code>
+	/// </summary>
+	[Serializable()]
+	public partial class RLGCS_AuthenticationRecordList: GenericRecordList<RCGCS_AuthenticationRecord>, IEnumerable, IEnumerator, ISerializable {
+		public static void EnsureInitialized() {}
+
+		protected override RCGCS_AuthenticationRecord GetElementDefaultValue() {
+			return new RCGCS_AuthenticationRecord("");
+		}
+
+		public T[] ToArray<T>(Func<RCGCS_AuthenticationRecord, T> converter) {
+			return ToArray(this, converter);
+		}
+
+		public static T[] ToArray<T>(RLGCS_AuthenticationRecordList recordlist, Func<RCGCS_AuthenticationRecord, T> converter) {
+			return InnerToArray(recordlist, converter);
+		}
+		public static implicit operator RLGCS_AuthenticationRecordList(RCGCS_AuthenticationRecord[] array) {
+			RLGCS_AuthenticationRecordList result = new RLGCS_AuthenticationRecordList();
+			result.InnerFromArray(array);
+			return result;
+		}
+
+		public static RLGCS_AuthenticationRecordList ToList<T>(T[] array, Func <T, RCGCS_AuthenticationRecord> converter) {
+			RLGCS_AuthenticationRecordList result = new RLGCS_AuthenticationRecordList();
+			result.InnerFromArray(array, converter);
+			return result;
+		}
+
+		public static RLGCS_AuthenticationRecordList FromRestList<T>(RestList<T> restList, Func <T, RCGCS_AuthenticationRecord> converter) {
+			RLGCS_AuthenticationRecordList result = new RLGCS_AuthenticationRecordList();
+			result.InnerFromRestList(restList, converter);
+			return result;
+		}
+		/// <summary>
+		/// Default Constructor
+		/// </summary>
+		public RLGCS_AuthenticationRecordList(): base() {
+		}
+
+		/// <summary>
+		/// Constructor with transaction parameter
+		/// </summary>
+		/// <param name="trans"> IDbTransaction Parameter</param>
+		[Obsolete("Use the Default Constructor and set the Transaction afterwards.")]
+		public RLGCS_AuthenticationRecordList(IDbTransaction trans): base(trans) {
+		}
+
+		/// <summary>
+		/// Constructor with transaction parameter and alternate read method
+		/// </summary>
+		/// <param name="trans"> IDbTransaction Parameter</param>
+		/// <param name="alternateReadDBMethod"> Alternate Read Method</param>
+		[Obsolete("Use the Default Constructor and set the Transaction afterwards.")]
+		public RLGCS_AuthenticationRecordList(IDbTransaction trans, ReadDBMethodDelegate alternateReadDBMethod): this(trans) {
+			this.alternateReadDBMethod = alternateReadDBMethod;
+		}
+
+		/// <summary>
+		/// Constructor declaration for serialization
+		/// </summary>
+		/// <param name="info"> SerializationInfo</param>
+		/// <param name="context"> StreamingContext</param>
+		public RLGCS_AuthenticationRecordList(SerializationInfo info, StreamingContext context): base(info, context) {
+		}
+
+		public override BitArray[] GetDefaultOptimizedValues() {
+			BitArray[] def = new BitArray[1];
+			def[0] = null;
+			return def;
+		}
+		/// <summary>
+		/// Create as new list
+		/// </summary>
+		/// <returns>The new record list</returns>
+		protected override OSList<RCGCS_AuthenticationRecord> NewList() {
+			return new RLGCS_AuthenticationRecordList();
+		}
+
+
+	} // RLGCS_AuthenticationRecordList
 }

@@ -966,4 +966,195 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			return true;
 		}
 	} // RCGCS_MetadataEntryRecord
+
+	/// <summary>
+	/// Structure <code>RCGCS_AuthenticationRecord</code>
+	/// </summary>
+	[Serializable()]
+	public partial struct RCGCS_AuthenticationRecord: ISerializable, ITypedRecord<RCGCS_AuthenticationRecord> {
+		internal static readonly GlobalObjectKey IdGCS_Authentication = GlobalObjectKey.Parse("2UmDmepsh0WSfJ_D1JexCA*q8pnxP93dlGeAcSai+4ymg");
+
+		public static void EnsureInitialized() {}
+		[System.Xml.Serialization.XmlElement("GCS_Authentication")]
+		public STGCS_AuthenticationStructure ssSTGCS_Authentication;
+
+
+		public static implicit operator STGCS_AuthenticationStructure(RCGCS_AuthenticationRecord r) {
+			return r.ssSTGCS_Authentication;
+		}
+
+		public static implicit operator RCGCS_AuthenticationRecord(STGCS_AuthenticationStructure r) {
+			RCGCS_AuthenticationRecord res = new RCGCS_AuthenticationRecord(null);
+			res.ssSTGCS_Authentication = r;
+			return res;
+		}
+
+		public BitArray OptimizedAttributes;
+
+		public RCGCS_AuthenticationRecord(params string[] dummy) {
+			OptimizedAttributes = null;
+			ssSTGCS_Authentication = new STGCS_AuthenticationStructure(null);
+		}
+
+		public BitArray[] GetDefaultOptimizedValues() {
+			BitArray[] all = new BitArray[1];
+			all[0] = null;
+			return all;
+		}
+
+		public BitArray[] AllOptimizedAttributes {
+			set {
+				if (value == null) {
+				} else {
+					ssSTGCS_Authentication.OptimizedAttributes = value[0];
+				}
+			}
+			get {
+				BitArray[] all = new BitArray[1];
+				all[0] = null;
+				return all;
+			}
+		}
+
+		/// <summary>
+		/// Read a record from database
+		/// </summary>
+		/// <param name="r"> Data base reader</param>
+		/// <param name="index"> index</param>
+		public void Read(IDataReader r, ref int index) {
+			ssSTGCS_Authentication.Read(r, ref index);
+		}
+		/// <summary>
+		/// Read from database
+		/// </summary>
+		/// <param name="r"> Data reader</param>
+		public void ReadDB(IDataReader r) {
+			int index = 0;
+			Read(r, ref index);
+		}
+
+		/// <summary>
+		/// Read from record
+		/// </summary>
+		/// <param name="r"> Record</param>
+		public void ReadIM(RCGCS_AuthenticationRecord r) {
+			this = r;
+		}
+
+
+		public static bool operator == (RCGCS_AuthenticationRecord a, RCGCS_AuthenticationRecord b) {
+			if (a.ssSTGCS_Authentication != b.ssSTGCS_Authentication) return false;
+			return true;
+		}
+
+		public static bool operator != (RCGCS_AuthenticationRecord a, RCGCS_AuthenticationRecord b) {
+			return !(a==b);
+		}
+
+		public override bool Equals(object o) {
+			if (o.GetType() != typeof(RCGCS_AuthenticationRecord)) return false;
+			return (this == (RCGCS_AuthenticationRecord) o);
+		}
+
+		public override int GetHashCode() {
+			try {
+				return base.GetHashCode()
+				^ ssSTGCS_Authentication.GetHashCode()
+				;
+			} catch {
+				return base.GetHashCode();
+			}
+		}
+
+		public void GetObjectData(SerializationInfo info, StreamingContext context) {
+			Type objInfo = this.GetType();
+			FieldInfo[] fields;
+			fields = objInfo.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			for (int i = 0; i < fields.Length; i++)
+			if (fields[i] .FieldType.IsSerializable)
+			info.AddValue(fields[i] .Name, fields[i] .GetValue(this));
+		}
+
+		public RCGCS_AuthenticationRecord(SerializationInfo info, StreamingContext context) {
+			OptimizedAttributes = null;
+			ssSTGCS_Authentication = new STGCS_AuthenticationStructure(null);
+			Type objInfo = this.GetType();
+			FieldInfo fieldInfo = null;
+			fieldInfo = objInfo.GetField("ssSTGCS_Authentication", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssSTGCS_Authentication' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssSTGCS_Authentication = (STGCS_AuthenticationStructure) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+		}
+
+		public void RecursiveReset() {
+			ssSTGCS_Authentication.RecursiveReset();
+		}
+
+		public void InternalRecursiveSave() {
+			ssSTGCS_Authentication.InternalRecursiveSave();
+		}
+
+
+		public RCGCS_AuthenticationRecord Duplicate() {
+			RCGCS_AuthenticationRecord t;
+			t.ssSTGCS_Authentication = (STGCS_AuthenticationStructure) this.ssSTGCS_Authentication.Duplicate();
+			t.OptimizedAttributes = null;
+			return t;
+		}
+
+		IRecord IRecord.Duplicate() {
+			return Duplicate();
+		}
+
+		public void ToXml(Object parent, System.Xml.XmlElement baseElem, String fieldName, int detailLevel) {
+			System.Xml.XmlElement recordElem = VarValue.AppendChild(baseElem, "Record");
+			if (fieldName != null) {
+				VarValue.AppendAttribute(recordElem, "debug.field", fieldName);
+			}
+			if (detailLevel > 0) {
+				ssSTGCS_Authentication.ToXml(this, recordElem, "GCS_Authentication", detailLevel - 1);
+			} else {
+				VarValue.AppendDeferredEvaluationElement(recordElem);
+			}
+		}
+
+		public void EvaluateFields(VarValue variable, Object parent, String baseName, String fields) {
+			String head = VarValue.GetHead(fields);
+			String tail = VarValue.GetTail(fields);
+			variable.Found = false;
+			if (head == "gcs_authentication") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".GCS_Authentication")) variable.Value = ssSTGCS_Authentication; else variable.Optimized = true;
+				variable.SetFieldName("gcs_authentication");
+			}
+			if (variable.Found && tail != null) variable.EvaluateFields(this, head, tail);
+		}
+
+		public bool ChangedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public bool OptimizedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public object AttributeGet(GlobalObjectKey key) {
+			if (key == IdGCS_Authentication) {
+				return ssSTGCS_Authentication;
+			} else {
+				throw new Exception("Invalid key");
+			}
+		}
+		public void FillFromOther(IRecord other) {
+			if (other == null) return;
+			ssSTGCS_Authentication.FillFromOther((IRecord) other.AttributeGet(IdGCS_Authentication));
+		}
+		public bool IsDefault() {
+			RCGCS_AuthenticationRecord defaultStruct = new RCGCS_AuthenticationRecord(null);
+			if (this.ssSTGCS_Authentication != defaultStruct.ssSTGCS_Authentication) return false;
+			return true;
+		}
+	} // RCGCS_AuthenticationRecord
 }
