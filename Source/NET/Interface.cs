@@ -63,7 +63,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		/// Generates a temporary, secure URL to access a private file. This allows users to download files directly from Google.
 		/// </summary>
 		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
-		/// <param name="ssOperation">The operation the signed URL will permit: &apos;Download&apos; (GET) to read the object, &apos;Upload&apos; (PUT) to create/overwrite it, or &apos;Delete&apos; (DELETE) to remove it. Leave empty to default to Download.</param>
+		/// <param name="ssOperation">The operation the signed URL will permit: &apos;Download&apos; (GET), &apos;Upload&apos; (PUT) or &apos;Delete&apos; (DELETE). Required; case-insensitive.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssObjectName">The full path/name of the file (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssExpirationMinutes">How long (in minutes) the signed URL should remain valid.</param>
