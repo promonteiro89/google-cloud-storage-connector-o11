@@ -21,14 +21,19 @@
 .EXAMPLE
     .\run-tests.ps1 -Download      # first run: fetches the emulator, runs everything
     .\run-tests.ps1                # subsequent runs
-    .\run-tests.ps1 -SkipEmulator  # offline tests only (no emulator needed)
+    .\run-tests.ps1 -SkipEmulator  # offline + federation contract tests only (no emulator needed)
+    .\run-tests.ps1 -Category Live # live Workload Identity Federation (GitHub Actions only)
 #>
 [CmdletBinding()]
 param(
     [string]$EmulatorExe,
     [switch]$Download,
     [switch]$SkipEmulator,
-    [int]$EmulatorPort = 4443
+    [int]$EmulatorPort = 4443,
+    # Default = offline + emulator integration + federation contract. Live = real Google Cloud via
+    # GitHub OIDC (needs id-token: write and the GCP_* repository variables); never mixed with Default.
+    [ValidateSet("Default", "Live")]
+    [string]$Category = "Default"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,7 +70,7 @@ $pem = [IO.File]::ReadAllText($pemPath)
 # --- fake-gcs-server ------------------------------------------------------------------
 $emulatorProc = $null
 $emulatorOn = $false
-if (-not $SkipEmulator) {
+if (-not $SkipEmulator -and $Category -ne "Live") {
     if (-not $EmulatorExe) { $EmulatorExe = $env:FAKE_GCS_EXE }
     if (-not $EmulatorExe) { $EmulatorExe = Join-Path $tools 'fake-gcs-server.exe' }
 
@@ -104,17 +109,36 @@ if (-not $SkipEmulator) {
 }
 
 # --- Test harness (compiled against the real extension DLL, .NET Framework 4.8) ------
-$src = Get-Content (Join-Path $testsDir 'TestHarness.cs') -Raw
+$sources = @("TestHarness.cs", "FederationTests.cs", "LiveFederationTests.cs") | ForEach-Object { Join-Path $testsDir $_ }
+$refs = @($extDll, $osrtDll) + (@("Google.Apis.dll", "Google.Apis.Core.dll", "Google.Apis.Auth.dll", "Newtonsoft.Json.dll") | ForEach-Object { Join-Path $bin $_ }) +
+        @("System.dll", "System.Core.dll", "System.Net.Http.dll")
+
+# The harness now derives types from Google assemblies (the federation fakes), which are loaded
+# as soon as Add-Type enumerates the compiled types. Resolve them from Bin before compiling.
+Add-Type -TypeDefinition @"
+public static class GcsBinResolver
+{
+    public static void Install(string bin)
+    {
+        System.AppDomain.CurrentDomain.AssemblyResolve += delegate(object s, System.ResolveEventArgs e)
+        {
+            string p = System.IO.Path.Combine(bin, new System.Reflection.AssemblyName(e.Name).Name + ".dll");
+            return System.IO.File.Exists(p) ? System.Reflection.Assembly.LoadFrom(p) : null;
+        };
+    }
+}
+"@
+[GcsBinResolver]::Install($bin)
 
 try {
-    Add-Type -TypeDefinition $src -ReferencedAssemblies @($extDll, $osrtDll, 'System.dll', 'System.Core.dll')
-    $result = [GcsExtensionTestSuite]::Run($bin, $pem, $emulatorOn)
+    Add-Type -Path $sources -ReferencedAssemblies $refs
+    $result = [GcsExtensionTestSuite]::Run($bin, $pem, $emulatorOn, $Category)
     Write-Host $result.Log
     if ($result.Failed -gt 0) {
-        Write-Host ("RESULT: {0} passed, {1} FAILED" -f $result.Passed, $result.Failed) -ForegroundColor Red
+        Write-Host ("RESULT: {0} passed, {1} FAILED, {2} skipped" -f $result.Passed, $result.Failed, $result.Skipped) -ForegroundColor Red
         exit 1
     }
-    Write-Host ("RESULT: all {0} tests passed" -f $result.Passed) -ForegroundColor Green
+    Write-Host ("RESULT: {0} passed, 0 failed, {1} skipped" -f $result.Passed, $result.Skipped) -ForegroundColor Green
     exit 0
 }
 finally {

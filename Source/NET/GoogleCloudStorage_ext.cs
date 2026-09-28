@@ -2,14 +2,21 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Responses;
+using Google.Apis.Http;
 using Google.Apis.Storage.v1;
 using Google.Apis.Storage.v1.Data;
 using Google.Cloud.Storage.V1;
+using Newtonsoft.Json.Linq;
 using OutSystems.HubEdition.RuntimePlatform;
 
 namespace OutSystems.NssGoogleCloudStorage_ext
@@ -20,9 +27,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Updates an object&apos;s metadata without re-uploading its content. Only the provided fields are changed: empty text inputs leave the corresponding field untouched, and an empty Metadata list leaves custom metadata untouched. Within Metadata, an entry with an empty Value removes that key.
 		/// </summary>
-		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
-		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
-		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssObjectName">The full path/name of the object to update.</param>
 		/// <param name="ssContentType">New MIME type. Empty = unchanged.</param>
@@ -30,14 +35,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssContentDisposition">New content disposition (e.g. &apos;attachment; filename=&quot;report.pdf&quot;&apos;). Empty = unchanged.</param>
 		/// <param name="ssCacheControl">New cache control (e.g. &apos;public, max-age=3600&apos;). Empty = unchanged.</param>
 		/// <param name="ssMetadata">Custom metadata changes. Empty list = unchanged. An entry with empty Value removes that key; others are set/overwritten.</param>
-		public void MssObject_UpdateMetadata(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, string ssContentType, string ssContentEncoding, string ssContentDisposition, string ssCacheControl, RLGCS_MetadataEntryRecordList ssMetadata) {
+		public void MssObject_UpdateMetadata(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, string ssContentType, string ssContentEncoding, string ssContentDisposition, string ssCacheControl, RLGCS_MetadataEntryRecordList ssMetadata) {
 			var changes = ToMetadataDictionary(ssMetadata);
 			bool hasFieldChange = !string.IsNullOrEmpty(ssContentType) || !string.IsNullOrEmpty(ssContentEncoding)
 				|| !string.IsNullOrEmpty(ssContentDisposition) || !string.IsNullOrEmpty(ssCacheControl);
 			if (!hasFieldChange && changes == null)
 				throw new ArgumentException("Nothing to update: provide at least one of ContentType, ContentEncoding, ContentDisposition, CacheControl, or a non-empty Metadata list.");
 
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 
 			try
 			{
@@ -64,25 +70,24 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 				storageClient.UpdateObject(obj, new UpdateObjectOptions { IfMetagenerationMatch = obj.Metageneration });
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssObject_UpdateMetadata
 
 		/// <summary>
 		/// Deletes all objects whose names start with the given prefix (a &apos;folder&apos; and everything under it). The Prefix is mandatory and cannot be empty, as a safety measure against accidentally wiping an entire bucket. Returns the number of objects deleted.
 		/// </summary>
-		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
-		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
-		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssPrefix">All objects whose names start with this prefix are deleted (e.g. &apos;uploads/2025/&apos;). Cannot be empty.</param>
 		/// <param name="ssDeletedCount">Number of objects that were deleted.</param>
-		public void MssObject_DeleteByPrefix(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssPrefix, out long ssDeletedCount) {
+		public void MssObject_DeleteByPrefix(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssPrefix, out long ssDeletedCount) {
 			ssDeletedCount = 0;
 			if (string.IsNullOrWhiteSpace(ssPrefix))
 				throw new ArgumentException("Prefix cannot be empty - it would delete every object in the bucket. To do that intentionally, delete the bucket or list and delete the objects explicitly.");
 
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 
 			// Materialize the names first so deletions can't interfere with listing pagination.
 			var names = new List<string>();
@@ -91,8 +96,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				foreach (var obj in storageClient.ListObjects(ssBucketName, ssPrefix))
 					names.Add(obj.Name);
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 
 			long deleted = 0;
 			foreach (var name in names)
@@ -110,7 +115,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				{
 					throw new Exception("Deleted " + deleted + " of " + names.Count + " objects under prefix '" + ssPrefix + "', then failed on '" + name + "': " + e.Message, e);
 				}
-				catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+				catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 			}
 
 			ssDeletedCount = deleted;
@@ -119,13 +124,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Checks whether a bucket exists and is accessible to the service account, without listing its contents.
 		/// </summary>
-		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
-		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
-		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssExists">True if the bucket exists and the service account can access it.</param>
-		public void MssBucket_Exists(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, out bool ssExists) {
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+		public void MssBucket_Exists(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, out bool ssExists) {
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 
 			try
 			{
@@ -136,48 +140,46 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				ssExists = false;
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssBucket_Exists
 
 		/// <summary>
 		/// Copies an object to another location, within the same bucket or across buckets, without downloading its content. If the destination object exists, it will be overwritten.
 		/// </summary>
-		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
-		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
-		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssSourceBucketName">The bucket that currently contains the object.</param>
 		/// <param name="ssSourceObjectName">The full path/name of the source object (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssDestinationBucketName">The bucket to copy the object into (can be the same as the source).</param>
 		/// <param name="ssDestinationObjectName">The full path/name for the destination object.</param>
-		public void MssObject_Copy(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssSourceBucketName, string ssSourceObjectName, string ssDestinationBucketName, string ssDestinationObjectName) {
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+		public void MssObject_Copy(RCGCS_AuthenticationRecord ssAuthentication, string ssSourceBucketName, string ssSourceObjectName, string ssDestinationBucketName, string ssDestinationObjectName) {
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 			try
 			{
 				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName);
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssSourceBucketName, ssSourceObjectName); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssSourceBucketName, ssSourceObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssObject_Copy
 
 		/// <summary>
 		/// Moves an object to another location (copy + delete of the source), within the same bucket or across buckets. Use the same source and destination bucket to rename an object. If the destination exists, it will be overwritten.
 		/// </summary>
-		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
-		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
-		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssSourceBucketName">The bucket that currently contains the object.</param>
 		/// <param name="ssSourceObjectName">The full path/name of the source object (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssDestinationBucketName">The bucket to move the object into (can be the same as the source).</param>
 		/// <param name="ssDestinationObjectName">The full path/name for the destination object.</param>
-		public void MssObject_Move(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssSourceBucketName, string ssSourceObjectName, string ssDestinationBucketName, string ssDestinationObjectName) {
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+		public void MssObject_Move(RCGCS_AuthenticationRecord ssAuthentication, string ssSourceBucketName, string ssSourceObjectName, string ssDestinationBucketName, string ssDestinationObjectName) {
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 			try
 			{
 				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName);
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssSourceBucketName, ssSourceObjectName); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssSourceBucketName, ssSourceObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 
 			// Move is copy-then-delete and is not atomic: if the delete fails, both objects exist.
 			// Surface that state explicitly instead of a generic error.
@@ -194,16 +196,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Retrieves the metadata of a specific object (size, content type, hashes, generation, timestamps, storage class) without downloading its content. Returns Exists = False if the object does not exist.
 		/// </summary>
-		/// <param name="ssProjectId">The unique ID of your Google Cloud Project (found in the GCS Console).</param>
-		/// <param name="ssClientEmail">The &apos;client_email&apos; found in your Service Account JSON key.</param>
-		/// <param name="ssPrivateKey">The &apos;private_key&apos; string from your Service Account JSON (including the BEGIN/END headers).</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssObjectName">The full path/name of the file (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssExists">Returns True if the object was found in the bucket, and False if it does not exist. When False, the Metadata record is returned empty.</param>
 		/// <param name="ssMetadata">The metadata of the object (size, content type, hashes, version identifiers, storage class, and timestamps), retrieved without downloading its content. Only populated when Exists is True.</param>
 		/// <param name="ssCustomMetadata">The object&apos;s custom key-value metadata. Empty when the object has none or does not exist.</param>
-		public void MssObject_GetMetadata(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, out bool ssExists, out RCGCS_ObjectMetadataRecord ssMetadata, out RLGCS_MetadataEntryRecordList ssCustomMetadata) {
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+		public void MssObject_GetMetadata(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, out bool ssExists, out RCGCS_ObjectMetadataRecord ssMetadata, out RLGCS_MetadataEntryRecordList ssCustomMetadata) {
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 			ssExists = false;
 			ssMetadata = new RCGCS_ObjectMetadataRecord(null);
 			ssCustomMetadata = new RLGCS_MetadataEntryRecordList();
@@ -245,43 +246,252 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				ssExists = false;
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssObject_GetMetadata
-		/// <summary>
-		/// Caches of StorageClient/UrlSigner instances per service account. Extension actions run on every
-		/// request, and creating a StorageClient per call parses the RSA private key and allocates a new
-		/// HttpClient each time (latency + socket exhaustion under load). Statics survive across requests in
-		/// the app domain, and both StorageClient and UrlSigner are thread-safe, so they are safe to share.
-		/// Keys are SHA-256 hashes of the credentials, so raw private keys are never retained as cache keys.
-		/// In practice an application uses one or few service accounts, so these caches stay small.
-		/// </summary>
-		private static readonly ConcurrentDictionary<string, StorageClient> storageClientCache = new ConcurrentDictionary<string, StorageClient>();
-		private static readonly ConcurrentDictionary<string, UrlSigner> urlSignerCache = new ConcurrentDictionary<string, UrlSigner>();
+		// ---- Authentication --------------------------------------------------------------
+		// WorkloadIdentityFederation: IdP JWT (client credentials or SubjectToken) -> Google STS ->
+		// service account impersonation; URLs signed through IAM signBlob.
+		// ServiceAccountKey (default when AuthenticationMethod is empty): ClientEmail + PrivateKey;
+		// URLs signed locally.
+
+		internal const string MethodServiceAccountKey = "ServiceAccountKey";
+		internal const string MethodWorkloadIdentityFederation = "WorkloadIdentityFederation";
+
+		private const string StsTokenUrl = "https://sts.googleapis.com/v1/token";
+		private const string JwtSubjectTokenType = "urn:ietf:params:oauth:token-type:jwt";
 
 		/// <summary>
-		/// Computes a cache key from the service account credentials.
+		/// The credentials an action runs with: a plain copy of the Authentication record, so the
+		/// auth layer doesn't depend on Integration Studio's generated types.
 		/// </summary>
-		private static string GetCredentialCacheKey(string clientEmail, string privateKey)
+		internal sealed class AuthConfig
 		{
-			using (var sha = SHA256.Create())
+			public string ProjectId = "";
+			public string AuthenticationMethod = "";
+			public string ClientEmail = "";
+			public string PrivateKey = "";
+			public string WorkloadIdentityProvider = "";
+			public string ServiceAccountEmail = "";
+			public string TokenEndpoint = "";
+			public string ClientId = "";
+			public string ClientSecret = "";
+			public string Scope = "";
+			public string Audience = "";
+			public string SubjectToken = "";
+		}
+
+		/// <summary>Copies the action's Authentication record into the auth layer's own type.</summary>
+		private static AuthConfig FromRecord(RCGCS_AuthenticationRecord record)
+		{
+			var s = record.ssSTGCS_Authentication;
+			return new AuthConfig
 			{
-				var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(clientEmail + "\n" + privateKey));
-				return Convert.ToBase64String(hash);
-			}
+				ProjectId = s.ssProjectId ?? "",
+				AuthenticationMethod = s.ssAuthenticationMethod ?? "",
+				ClientEmail = s.ssClientEmail ?? "",
+				PrivateKey = s.ssPrivateKey ?? "",
+				WorkloadIdentityProvider = s.ssWorkloadIdentityProvider ?? "",
+				ServiceAccountEmail = s.ssServiceAccountEmail ?? "",
+				TokenEndpoint = s.ssTokenEndpoint ?? "",
+				ClientId = s.ssClientId ?? "",
+				ClientSecret = s.ssClientSecret ?? "",
+				Scope = s.ssScope ?? "",
+				Audience = s.ssAudience ?? "",
+				SubjectToken = s.ssSubjectToken ?? ""
+			};
 		}
 
 		/// <summary>
-		/// Creates a ServiceAccountCredential from individual parameters.
+		/// ProjectId is only used by the project-scoped bucket actions; checking it there gives a clear
+		/// message instead of Google's generic "invalid project" error.
 		/// </summary>
-		private static ServiceAccountCredential GetServiceAccountCredential(string clientEmail, string privateKey)
+		private static void RequireProjectId(AuthConfig a, string action)
+		{
+			if (string.IsNullOrWhiteSpace(a.ProjectId))
+				throw new ArgumentException(action + " requires Authentication.ProjectId.");
+		}
+
+		/// <summary>
+		/// Per-credential caches (the clients are thread-safe). Creating a client per call re-parses the
+		/// key or re-runs the token exchange and opens a new HttpClient, which exhausts sockets under load.
+		/// Keys are SHA-256 hashes with a per-method prefix, so secrets aren't kept and methods never mix.
+		/// </summary>
+		private static readonly ConcurrentDictionary<string, StorageClient> StorageClientCache = new ConcurrentDictionary<string, StorageClient>();
+		private static readonly ConcurrentDictionary<string, UrlSigner> UrlSignerCache = new ConcurrentDictionary<string, UrlSigner>();
+		private static readonly ConcurrentDictionary<string, FederatedIdentity> FederatedIdentityCache = new ConcurrentDictionary<string, FederatedIdentity>();
+
+		private static readonly Lazy<HttpClient> IdentityProviderHttp = new Lazy<HttpClient>(() => new HttpClient { Timeout = TimeSpan.FromSeconds(30) });
+
+		/// <summary>
+		/// Test seam: when set, all Google auth/Storage HTTP traffic and identity provider token requests
+		/// in WorkloadIdentityFederation mode go through this factory. Never set in production.
+		/// </summary>
+		internal static IHttpClientFactory HttpClientFactoryOverride { get; set; }
+
+		private enum AuthMethod { ServiceAccountKey, WorkloadIdentityFederation }
+
+		// ---- Method resolution and validation ----------------------------------------------
+
+		private static AuthMethod ResolveAuthMethod(AuthConfig a)
+		{
+			string method = (a.AuthenticationMethod ?? string.Empty).Trim();
+			AuthMethod resolved;
+			if (method.Length == 0 || method.Equals(MethodServiceAccountKey, StringComparison.OrdinalIgnoreCase))
+				resolved = AuthMethod.ServiceAccountKey;
+			else if (method.Equals(MethodWorkloadIdentityFederation, StringComparison.OrdinalIgnoreCase))
+				resolved = AuthMethod.WorkloadIdentityFederation;
+			else
+				throw new ArgumentException("Invalid AuthenticationMethod '" + a.AuthenticationMethod + "'. Use '" + MethodWorkloadIdentityFederation + "' or '" + MethodServiceAccountKey + "' (or leave it empty for " + MethodServiceAccountKey + ").");
+
+			var missing = new List<string>();
+			if (resolved == AuthMethod.ServiceAccountKey)
+			{
+				if (string.IsNullOrWhiteSpace(a.ClientEmail)) missing.Add("ClientEmail");
+				if (string.IsNullOrWhiteSpace(a.PrivateKey)) missing.Add("PrivateKey");
+				if (missing.Count > 0)
+					throw new ArgumentException(MethodServiceAccountKey + " authentication requires ClientEmail and PrivateKey (missing: " + string.Join(", ", missing) + ").");
+				return resolved;
+			}
+
+			if (string.IsNullOrWhiteSpace(a.WorkloadIdentityProvider)) missing.Add("WorkloadIdentityProvider");
+			if (string.IsNullOrWhiteSpace(a.ServiceAccountEmail)) missing.Add("ServiceAccountEmail");
+			if (string.IsNullOrWhiteSpace(a.SubjectToken))
+			{
+				if (string.IsNullOrWhiteSpace(a.TokenEndpoint)) missing.Add("TokenEndpoint");
+				if (string.IsNullOrWhiteSpace(a.ClientId)) missing.Add("ClientId");
+				if (string.IsNullOrWhiteSpace(a.ClientSecret)) missing.Add("ClientSecret");
+			}
+			if (missing.Count > 0)
+				throw new ArgumentException(MethodWorkloadIdentityFederation + " authentication requires WorkloadIdentityProvider, ServiceAccountEmail, and either SubjectToken or TokenEndpoint + ClientId + ClientSecret (missing: " + string.Join(", ", missing) + ").");
+
+			NormalizeWorkloadIdentityProvider(a.WorkloadIdentityProvider); // throws on a malformed value
+			if (string.IsNullOrWhiteSpace(a.SubjectToken))
+				ValidateTokenEndpoint(a.TokenEndpoint);
+			return resolved;
+		}
+
+		/// <summary>The identity whose permissions apply, for error messages.</summary>
+		private static string IdentityOf(AuthConfig a)
+		{
+			return ResolveAuthMethodSafe(a) == AuthMethod.WorkloadIdentityFederation ? a.ServiceAccountEmail : a.ClientEmail;
+		}
+
+		private static AuthMethod ResolveAuthMethodSafe(AuthConfig a)
+		{
+			return (a.AuthenticationMethod ?? string.Empty).Trim().Equals(MethodWorkloadIdentityFederation, StringComparison.OrdinalIgnoreCase)
+				? AuthMethod.WorkloadIdentityFederation
+				: AuthMethod.ServiceAccountKey;
+		}
+
+		/// <summary>
+		/// Accepts the provider as '//iam.googleapis.com/projects/..', 'https://iam.googleapis.com/projects/..'
+		/// or 'projects/..' and returns the STS audience form '//iam.googleapis.com/projects/..'.
+		/// </summary>
+		internal static string NormalizeWorkloadIdentityProvider(string provider)
+		{
+			string p = (provider ?? string.Empty).Trim();
+			if (p.StartsWith("https:", StringComparison.OrdinalIgnoreCase)) p = p.Substring("https:".Length);
+			if (p.StartsWith("projects/", StringComparison.Ordinal)) p = "//iam.googleapis.com/" + p;
+
+			bool valid = p.StartsWith("//iam.googleapis.com/projects/", StringComparison.Ordinal)
+				&& p.IndexOf("/locations/", StringComparison.Ordinal) >= 0
+				&& p.IndexOf("/workloadIdentityPools/", StringComparison.Ordinal) >= 0
+				&& p.IndexOf("/providers/", StringComparison.Ordinal) >= 0;
+			if (!valid)
+				throw new ArgumentException("WorkloadIdentityProvider '" + provider + "' is not a workload identity provider resource name. Expected '//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID'.");
+			return p;
+		}
+
+		private static void ValidateTokenEndpoint(string tokenEndpoint)
+		{
+			Uri uri;
+			bool ok = Uri.TryCreate((tokenEndpoint ?? string.Empty).Trim(), UriKind.Absolute, out uri)
+				&& (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback));
+			if (!ok)
+				throw new ArgumentException("TokenEndpoint '" + tokenEndpoint + "' must be an absolute https:// URL (for example 'https://login.microsoftonline.com/TENANT_ID/oauth2/v2.0/token').");
+		}
+
+		private static string CacheKey(string prefix, params string[] parts)
+		{
+			using (var sha = SHA256.Create())
+			{
+				var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", parts.Select(p => p ?? string.Empty))));
+				return prefix + "|" + Convert.ToBase64String(hash);
+			}
+		}
+
+		private static string FederatedCacheKey(AuthConfig a)
+		{
+			return CacheKey("wif",
+				NormalizeWorkloadIdentityProvider(a.WorkloadIdentityProvider),
+				a.ServiceAccountEmail.Trim(),
+				string.IsNullOrWhiteSpace(a.SubjectToken) ? "client-credentials" : "supplied-token",
+				a.TokenEndpoint == null ? null : a.TokenEndpoint.Trim(), a.ClientId, a.ClientSecret, a.Scope, a.Audience);
+		}
+
+		// ---- Client factories --------------------------------------------------------------
+
+		/// <summary>
+		/// Returns the cached StorageClient for the credentials. When GCSCONNECTOR_EMULATOR_HOST is set
+		/// (tests only), connects unauthenticated to that emulator instead. The name is deliberately not
+		/// Google's STORAGE_EMULATOR_HOST, so a variable set for other tools can't redirect production.
+		/// </summary>
+		private static StorageClient GetStorageClient(AuthConfig a)
+		{
+			var method = ResolveAuthMethod(a);
+
+			string emulatorHost = Environment.GetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST");
+			if (!string.IsNullOrEmpty(emulatorHost))
+			{
+				string baseUri = (emulatorHost.Contains("://") ? emulatorHost : "http://" + emulatorHost).TrimEnd('/') + "/storage/v1/";
+				return StorageClientCache.GetOrAdd(
+					"emulator|" + baseUri,
+					_ => new StorageClientBuilder { BaseUri = baseUri, UnauthenticatedAccess = true }.Build());
+			}
+
+			if (method == AuthMethod.WorkloadIdentityFederation)
+			{
+				var identity = GetFederatedIdentity(a);
+				return StorageClientCache.GetOrAdd(FederatedCacheKey(a), _ =>
+				{
+					var builder = new StorageClientBuilder { GoogleCredential = identity.Credential };
+					if (HttpClientFactoryOverride != null) builder.HttpClientFactory = HttpClientFactoryOverride;
+					return builder.Build();
+				});
+			}
+
+			return StorageClientCache.GetOrAdd(
+				CacheKey("key", a.ClientEmail, a.PrivateKey),
+				_ => StorageClient.Create(GetServiceAccountCredential(a).ToGoogleCredential()));
+		}
+
+		/// <summary>
+		/// Returns a cached UrlSigner for the given credentials, creating it on first use. With a
+		/// service account key the signature is computed locally; with Workload Identity Federation it
+		/// is produced by the IAM Credentials signBlob API as the impersonated service account.
+		/// </summary>
+		private static UrlSigner GetUrlSigner(AuthConfig a)
+		{
+			if (ResolveAuthMethod(a) == AuthMethod.WorkloadIdentityFederation)
+			{
+				var identity = GetFederatedIdentity(a);
+				return UrlSignerCache.GetOrAdd(FederatedCacheKey(a), _ => UrlSigner.FromCredential(identity.Credential));
+			}
+
+			return UrlSignerCache.GetOrAdd(
+				CacheKey("key", a.ClientEmail, a.PrivateKey),
+				_ => UrlSigner.FromCredential(GetServiceAccountCredential(a)));
+		}
+
+		private static ServiceAccountCredential GetServiceAccountCredential(AuthConfig a)
 		{
 			try
 			{
-				var initializer = new ServiceAccountCredential.Initializer(clientEmail)
+				var initializer = new ServiceAccountCredential.Initializer(a.ClientEmail)
 				{
 					Scopes = new[] { StorageService.Scope.CloudPlatform }
-				}.FromPrivateKey(privateKey.Replace("\\n", "\n"));
+				}.FromPrivateKey(a.PrivateKey.Replace("\\n", "\n"));
 
 				return new ServiceAccountCredential(initializer);
 			}
@@ -291,46 +501,251 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 		}
 
+		// ---- Workload Identity Federation --------------------------------------------------
+
 		/// <summary>
-		/// Returns a cached StorageClient for the given service account, creating it on first use.
-		/// Honors the GCSCONNECTOR_EMULATOR_HOST environment variable (never set on a real
-		/// OutSystems server): when present, connects unauthenticated to a local GCS emulator
-		/// such as fake-gcs-server, enabling integration tests without Google credentials.
-		/// The name is deliberately extension-specific (not Google's STORAGE_EMULATOR_HOST) so a
-		/// machine-wide variable set for other tooling can never silently redirect this extension.
+		/// A federated credential plus the source of its identity-provider token. The credential chain is
+		/// external account (subject token -> Google STS) -> impersonated service account (IAM Credentials).
+		/// The SDK refreshes both automatically, calling back into the token source only when needed.
 		/// </summary>
-		private static StorageClient GetStorageClient(string projectId, string clientEmail, string privateKey)
+		private sealed class FederatedIdentity
 		{
-			string emulatorHost = Environment.GetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST");
-			if (!string.IsNullOrEmpty(emulatorHost))
+			public FederatedIdentity(GoogleCredential credential, SubjectTokenSource tokenSource)
 			{
-				string baseUri = (emulatorHost.Contains("://") ? emulatorHost : "http://" + emulatorHost).TrimEnd('/') + "/storage/v1/";
-				return storageClientCache.GetOrAdd(
-					"emulator|" + baseUri,
-					_ => new StorageClientBuilder { BaseUri = baseUri, UnauthenticatedAccess = true }.Build());
+				Credential = credential;
+				TokenSource = tokenSource;
 			}
 
-			return storageClientCache.GetOrAdd(
-				GetCredentialCacheKey(clientEmail, privateKey),
-				_ => StorageClient.Create(GetServiceAccountCredential(clientEmail, privateKey).ToGoogleCredential()));
+			public GoogleCredential Credential { get; private set; }
+			public SubjectTokenSource TokenSource { get; private set; }
 		}
 
-		/// <summary>
-		/// Returns a cached UrlSigner for the given service account, creating it on first use.
-		/// </summary>
-		private static UrlSigner GetUrlSigner(string clientEmail, string privateKey)
+		private static FederatedIdentity GetFederatedIdentity(AuthConfig a)
 		{
-			return urlSignerCache.GetOrAdd(
-				GetCredentialCacheKey(clientEmail, privateKey),
-				_ => UrlSigner.FromCredential(GetServiceAccountCredential(clientEmail, privateKey)));
+			var identity = FederatedIdentityCache.GetOrAdd(FederatedCacheKey(a), _ => CreateFederatedIdentity(a));
+			if (!string.IsNullOrWhiteSpace(a.SubjectToken))
+				identity.TokenSource.Supply(a.SubjectToken.Trim()); // latest caller-supplied token wins
+			return identity;
+		}
+
+		private static FederatedIdentity CreateFederatedIdentity(AuthConfig a)
+		{
+			var tokenSource = new SubjectTokenSource(a.TokenEndpoint == null ? null : a.TokenEndpoint.Trim(), a.ClientId, a.ClientSecret, a.Scope, a.Audience);
+
+			var externalInitializer = new ProgrammaticExternalAccountCredential.Initializer(
+				StsTokenUrl, NormalizeWorkloadIdentityProvider(a.WorkloadIdentityProvider), JwtSubjectTokenType, tokenSource)
+			{
+				Scopes = new[] { StorageService.Scope.CloudPlatform }
+			};
+			if (HttpClientFactoryOverride != null) externalInitializer.HttpClientFactory = HttpClientFactoryOverride;
+			var federated = GoogleCredential.FromProgrammaticExternalAccountCredential(new ProgrammaticExternalAccountCredential(externalInitializer));
+
+			var impersonationInitializer = new ImpersonatedCredential.Initializer(a.ServiceAccountEmail.Trim())
+			{
+				Scopes = new[] { StorageService.Scope.CloudPlatform }
+			};
+			if (HttpClientFactoryOverride != null) impersonationInitializer.HttpClientFactory = HttpClientFactoryOverride;
+
+			return new FederatedIdentity(federated.Impersonate(impersonationInitializer), tokenSource);
 		}
 
 		/// <summary>
-		/// Parses a GCS RFC3339 timestamp defensively. The SDK's *DateTimeOffset properties use a
-		/// strict format (exactly what production GCS emits); parsing the raw string with a flexible
-		/// parser also tolerates emulators (e.g. fake-gcs-server emits microsecond precision with a
-		/// local UTC offset) and any future format drift. Returns 1900-01-01 (the OutSystems null
-		/// date) when missing or unparseable.
+		/// Supplies the JWT for the STS exchange: the caller's SubjectToken, or one from the OAuth 2.0
+		/// client-credentials grant (RFC 6749 4.4), cached until shortly before it expires.
+		/// </summary>
+		private sealed class SubjectTokenSource : ProgrammaticExternalAccountCredential.ISubjectTokenProvider
+		{
+			private readonly string _tokenEndpoint, _clientId, _clientSecret, _scope, _audience;
+			private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
+			private volatile string _suppliedToken;
+			private string _cachedToken;
+			private DateTimeOffset _cachedUntil;
+			private bool _useBasicClientAuth;
+
+			public SubjectTokenSource(string tokenEndpoint, string clientId, string clientSecret, string scope, string audience)
+			{
+				_tokenEndpoint = tokenEndpoint;
+				_clientId = clientId;
+				_clientSecret = clientSecret;
+				_scope = scope;
+				_audience = audience;
+			}
+
+			public void Supply(string token) { _suppliedToken = token; }
+
+			public async Task<string> GetSubjectTokenAsync(ProgrammaticExternalAccountCredential caller, CancellationToken taskCancellationToken)
+			{
+				string supplied = _suppliedToken;
+				if (!string.IsNullOrEmpty(supplied))
+					return supplied;
+
+				await _lock.WaitAsync(taskCancellationToken).ConfigureAwait(false);
+				try
+				{
+					if (_cachedToken != null && DateTimeOffset.UtcNow < _cachedUntil)
+						return _cachedToken;
+
+					var result = await RequestClientCredentialsTokenAsync(taskCancellationToken).ConfigureAwait(false);
+					_cachedToken = result.Token;
+					// Refresh a minute early (or halfway through a very short lifetime).
+					var margin = result.Lifetime > TimeSpan.FromMinutes(2) ? TimeSpan.FromMinutes(1) : TimeSpan.FromTicks(result.Lifetime.Ticks / 2);
+					_cachedUntil = DateTimeOffset.UtcNow + result.Lifetime - margin;
+					return result.Token;
+				}
+				finally
+				{
+					_lock.Release();
+				}
+			}
+
+			private sealed class IdpToken
+			{
+				public string Token;
+				public TimeSpan Lifetime;
+			}
+
+			private async Task<IdpToken> RequestClientCredentialsTokenAsync(CancellationToken ct)
+			{
+				HttpClient http = HttpClientFactoryOverride != null
+					? HttpClientFactoryOverride.CreateHttpClient(new CreateHttpClientArgs())
+					: IdentityProviderHttp.Value;
+
+				// client_secret_post first (Entra ID, Auth0, Keycloak); if the provider rejects the client,
+				// retry once with HTTP Basic client authentication (Okta's default).
+				for (int attempt = 0; ; attempt++)
+				{
+					bool basic = _useBasicClientAuth || attempt > 0;
+					using (var request = new HttpRequestMessage(HttpMethod.Post, _tokenEndpoint))
+					{
+						var form = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("grant_type", "client_credentials") };
+						if (basic)
+						{
+							var raw = Uri.EscapeDataString(_clientId ?? string.Empty) + ":" + Uri.EscapeDataString(_clientSecret ?? string.Empty);
+							request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(raw)));
+						}
+						else
+						{
+							form.Add(new KeyValuePair<string, string>("client_id", _clientId ?? string.Empty));
+							form.Add(new KeyValuePair<string, string>("client_secret", _clientSecret ?? string.Empty));
+						}
+						if (!string.IsNullOrWhiteSpace(_scope)) form.Add(new KeyValuePair<string, string>("scope", _scope));
+						if (!string.IsNullOrWhiteSpace(_audience)) form.Add(new KeyValuePair<string, string>("audience", _audience));
+						request.Content = new FormUrlEncodedContent(form);
+
+						HttpResponseMessage response;
+						try
+						{
+							response = await http.SendAsync(request, ct).ConfigureAwait(false);
+						}
+						catch (Exception e) when (e is HttpRequestException || e is TaskCanceledException)
+						{
+							throw new IdentityProviderException("Could not reach the identity provider token endpoint '" + _tokenEndpoint + "': " + e.Message, e);
+						}
+
+						using (response)
+						{
+							string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+							if (response.IsSuccessStatusCode)
+							{
+								int expiresIn;
+								string token = ParseTokenResponse(body, out expiresIn);
+								if (!LooksLikeJwt(token))
+									throw new IdentityProviderException("The identity provider returned a token that is not a JWT, but Workload Identity Federation requires a signed JWT. For Entra ID, request a token for your own app registration (Scope 'api://YOUR_APP_ID/.default'), not Microsoft Graph; for Okta, use a custom authorization server.");
+								if (basic) _useBasicClientAuth = true;
+								return new IdpToken { Token = token, Lifetime = TimeSpan.FromSeconds(expiresIn) };
+							}
+
+							string error, description;
+							ParseOAuthError(body, out error, out description);
+							bool invalidClient = response.StatusCode == HttpStatusCode.Unauthorized || error == "invalid_client";
+							if (!basic && invalidClient && attempt == 0)
+								continue;
+
+							string detail = description ?? (body.Length > 300 ? body.Substring(0, 300) + "..." : body);
+							throw new IdentityProviderException("The identity provider rejected the client-credentials token request (" + (int)response.StatusCode + " " + (error ?? response.StatusCode.ToString()) + "): " + detail + ". Check TokenEndpoint, ClientId, ClientSecret, and Scope/Audience.");
+						}
+					}
+				}
+			}
+
+			private static string ParseTokenResponse(string body, out int expiresIn)
+			{
+				JObject root;
+				try { root = JObject.Parse(body); }
+				catch (Newtonsoft.Json.JsonException e) { throw new IdentityProviderException("The identity provider's token response was not valid JSON.", e); }
+
+				string token = (string)root["access_token"];
+				if (string.IsNullOrEmpty(token)) token = (string)root["id_token"];
+				if (string.IsNullOrEmpty(token))
+					throw new IdentityProviderException("The identity provider's token response did not contain an 'access_token'.");
+
+				expiresIn = 3600;
+				JToken ei = root["expires_in"];
+				int n;
+				if (ei != null && int.TryParse(ei.ToString(), out n)) expiresIn = n;
+				expiresIn = Math.Max(expiresIn, 30);
+				return token;
+			}
+
+			private static void ParseOAuthError(string body, out string error, out string description)
+			{
+				error = null;
+				description = null;
+				try
+				{
+					var root = JObject.Parse(body);
+					error = (string)root["error"];
+					description = (string)root["error_description"];
+				}
+				catch (Exception) { /* not JSON: the caller falls back to the raw body */ }
+			}
+
+			private static bool LooksLikeJwt(string token)
+			{
+				var parts = token.Split('.');
+				return parts.Length == 3 && parts.All(p => p.Length > 0);
+			}
+		}
+
+		/// <summary>A failure obtaining a token from the identity provider (surfaced unchanged to the caller).</summary>
+		internal sealed class IdentityProviderException : Exception
+		{
+			public IdentityProviderException(string message, Exception inner = null) : base(message, inner) { }
+		}
+
+		// ---- Auth-aware error translation --------------------------------------------------
+
+		private static string UnauthenticatedHint(AuthConfig a)
+		{
+			return ResolveAuthMethodSafe(a) == AuthMethod.WorkloadIdentityFederation
+				? "Check the Workload Identity Federation setup (provider, attribute condition) and that the federated identity has 'Workload Identity User' on '" + a.ServiceAccountEmail + "'."
+				: "Check that ClientEmail and PrivateKey belong to the same service account and that the key has not been revoked.";
+		}
+
+		/// <summary>
+		/// Translates a token endpoint failure (key: typically 'invalid_grant'; federation: the STS
+		/// exchange or the impersonation was rejected) into an actionable message.
+		/// </summary>
+		private static Exception FriendlyAuthException(TokenResponseException e, AuthConfig a)
+		{
+			if (ResolveAuthMethodSafe(a) == AuthMethod.WorkloadIdentityFederation)
+				return new Exception("Workload Identity Federation failed for service account '" + a.ServiceAccountEmail + "': Google rejected the token exchange or impersonation. Common causes: a wrong WorkloadIdentityProvider value, a token whose issuer or audience does not match the provider, a token rejected by the attribute condition, or a federated identity without 'Workload Identity User' on the service account. Details: " + e.Message, e);
+
+			return new Exception("Google rejected the service account credentials for '" + a.ClientEmail + "' (ClientEmail/PrivateKey mismatch, deleted service account, revoked key, or server clock skew). Details: " + e.Message, e);
+		}
+
+		/// <summary>Translates a failure while signing a URL (federation: the signBlob call) into an actionable message.</summary>
+		private static Exception FriendlySigningException(Exception e, AuthConfig a)
+		{
+			if (ResolveAuthMethodSafe(a) == AuthMethod.WorkloadIdentityFederation)
+				return new Exception("Signing the URL failed: service account '" + a.ServiceAccountEmail + "' could not sign through the IAM Credentials API. Grant the federated identity 'Service Account Token Creator' on the service account. Details: " + e.Message, e);
+			return new Exception("Signing the URL failed for service account '" + a.ClientEmail + "'. Details: " + e.Message, e);
+		}
+
+		/// <summary>
+		/// Parses an RFC 3339 timestamp. The SDK's *DateTimeOffset properties only accept GCS's exact
+		/// format and fail on others (e.g. fake-gcs-server's microseconds with a local offset).
+		/// Returns 1900-01-01, the OutSystems null date, when missing or unparseable.
 		/// </summary>
 		private static DateTime ParseTimestamp(string raw)
 		{
@@ -373,7 +788,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// OutSystems logs, instead of Google's raw API error. The original exception is kept
 		/// as InnerException.
 		/// </summary>
-		private static Exception FriendlyException(Google.GoogleApiException e, string clientEmail, string bucketName, string objectName)
+		private static Exception FriendlyException(Google.GoogleApiException e, AuthConfig a, string bucketName, string objectName)
 		{
 			string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
 
@@ -384,9 +799,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				return new Exception("Bucket '" + bucketName + "' does not exist (names are case-sensitive and must match exactly). Details: " + details, e);
 			}
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.Forbidden)
-				return new Exception("Access denied for service account '" + clientEmail + "'. Grant it the required IAM role in Google Cloud (Storage Object Admin for object operations, Storage Admin for bucket operations). Details: " + details, e);
+				return new Exception("Access denied for service account '" + IdentityOf(a) + "'. Grant it the required IAM role in Google Cloud (Storage Object Admin for object operations, Storage Admin for bucket operations). Details: " + details, e);
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.Unauthorized)
-				return new Exception("Google rejected the request as unauthenticated. Check that ClientEmail and PrivateKey belong to the same service account and that the key has not been revoked. Details: " + details, e);
+				return new Exception("Google rejected the request as unauthenticated. " + UnauthenticatedHint(a) + " Details: " + details, e);
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.Conflict)
 			{
 				if (details != null && details.IndexOf("not empty", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -397,28 +812,20 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		}
 
 		/// <summary>
-		/// Translates a token endpoint failure (typically 'invalid_grant') into an actionable message.
-		/// </summary>
-		private static Exception FriendlyAuthException(TokenResponseException e, string clientEmail)
-		{
-			return new Exception("Google rejected the service account credentials for '" + clientEmail + "' (ClientEmail/PrivateKey mismatch, deleted service account, revoked key, or server clock skew). Details: " + e.Message, e);
-		}
-
-		/// <summary>
 		/// Lists all buckets in the specified project.
 		/// </summary>
-		/// <param name="ssProjectId"></param>
-		/// <param name="ssClientEmail"></param>
-		/// <param name="ssPrivateKey"></param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketList"></param>
-		public void MssBucket_List(string ssProjectId, string ssClientEmail, string ssPrivateKey, out RLGCS_BucketRecordList ssBucketList)
+		public void MssBucket_List(RCGCS_AuthenticationRecord ssAuthentication, out RLGCS_BucketRecordList ssBucketList)
 		{
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			RequireProjectId(auth, "Bucket_List");
+			var storageClient = GetStorageClient(auth);
 			ssBucketList = new RLGCS_BucketRecordList();
 
 			try
 			{
-				var buckets = storageClient.ListBuckets(ssProjectId);
+				var buckets = storageClient.ListBuckets(auth.ProjectId);
 
 				foreach (var b in buckets)
 				{
@@ -436,26 +843,26 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					ssBucketList.Append(record);
 				}
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, null, null); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, null, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssBucket_List
 
 		/// <summary>
 		/// Creates a new bucket in the specified project.
 		/// </summary>
-		/// <param name="ssProjectId"></param>
-		/// <param name="ssClientEmail"></param>
-		/// <param name="ssPrivateKey"></param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssLocation"></param>
-		public void MssBucket_Create(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssLocation)
+		public void MssBucket_Create(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssLocation)
 		{
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			RequireProjectId(auth, "Bucket_Create");
+			var storageClient = GetStorageClient(auth);
 
 			try
 			{
 				storageClient.CreateBucket(
-					ssProjectId,
+					auth.ProjectId,
 					new Bucket
 					{
 						Name = ssBucketName,
@@ -463,59 +870,56 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					}
 				);
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssBucket_Create
 
 		/// <summary>
 		/// Deletes a bucket. The bucket must be empty.
 		/// </summary>
-		/// <param name="ssProjectId"></param>
-		/// <param name="ssClientEmail"></param>
-		/// <param name="ssPrivateKey"></param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName"></param>
-		public void MssBucket_Delete(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName)
+		public void MssBucket_Delete(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName)
 		{
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 			try
 			{
 				storageClient.DeleteBucket(ssBucketName);
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssBucket_Delete
 
 		/// <summary>
 		/// Deletes an object from a bucket.
 		/// </summary>
-		/// <param name="ssProjectId"></param>
-		/// <param name="ssClientEmail"></param>
-		/// <param name="ssPrivateKey"></param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssObjectName"></param>
-		public void MssObject_Delete(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName)
+		public void MssObject_Delete(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName)
 		{
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 			try
 			{
 				storageClient.DeleteObject(ssBucketName, ssObjectName);
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssObject_Delete
 
 		/// <summary>
 		/// Checks whether an object exists in a bucket.
 		/// </summary>
-		/// <param name="ssProjectId"></param>
-		/// <param name="ssClientEmail"></param>
-		/// <param name="ssPrivateKey"></param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssObjectName"></param>
 		/// <param name="ssExists"></param>
-		public void MssObject_Exists(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, out bool ssExists)
+		public void MssObject_Exists(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, out bool ssExists)
 		{
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 
 			try
 			{
@@ -526,30 +930,29 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				ssExists = false;
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssObject_Exists
 
         /// <summary>
         /// Generates a signed URL for an object.
         /// </summary>
-        /// <param name="ssProjectId"></param>
-        /// <param name="ssClientEmail"></param>
-        /// <param name="ssPrivateKey"></param>
+        /// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
         /// <param name="ssOperation"></param>
         /// <param name="ssBucketName"></param>
         /// <param name="ssObjectName"></param>
         /// <param name="ssExpirationMinutes"></param>
         /// <param name="ssContentType">Optional; for Upload URLs, the exact Content-Type the client must send. Becomes part of the signature.</param>
         /// <param name="ssURL"></param>
-        public void MssObject_GetSignedUrl(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssOperation, string ssBucketName, string ssObjectName, int ssExpirationMinutes, string ssContentType, out string ssURL)
+        public void MssObject_GetSignedUrl(RCGCS_AuthenticationRecord ssAuthentication, string ssOperation, string ssBucketName, string ssObjectName, int ssExpirationMinutes, string ssContentType, out string ssURL)
 		{
 			if (ssExpirationMinutes <= 0)
 				throw new ArgumentException("ExpirationMinutes must be greater than zero (received " + ssExpirationMinutes + ").");
 			if (ssExpirationMinutes > 10080)
 				throw new ArgumentException("ExpirationMinutes cannot exceed 10080 minutes (7 days), the maximum validity of a Google Cloud V4 signed URL (received " + ssExpirationMinutes + ").");
 
-			var urlSigner = GetUrlSigner(ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			var urlSigner = GetUrlSigner(auth);
 
 			HttpMethod method;
 			switch ((ssOperation ?? "").Trim().ToUpperInvariant())
@@ -582,23 +985,27 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				});
 			}
 
-			ssURL = urlSigner.Sign(template, UrlSigner.Options.FromDuration(TimeSpan.FromMinutes(ssExpirationMinutes)));
+			try
+			{
+				ssURL = urlSigner.Sign(template, UrlSigner.Options.FromDuration(TimeSpan.FromMinutes(ssExpirationMinutes)));
+			}
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
+			catch (Google.GoogleApiException e) { throw FriendlySigningException(e, auth); }
 		} // MssObject_GetSignedUrl
 
 		/// <summary>
 		/// Uploads an object to a bucket.
 		/// </summary>
-		/// <param name="ssProjectId"></param>
-		/// <param name="ssClientEmail"></param>
-		/// <param name="ssPrivateKey"></param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssObjectName"></param>
 		/// <param name="ssContent"></param>
 		/// <param name="ssContentType"></param>
 		/// <param name="ssMetadata">Optional custom key-value metadata to store with the object. Retrievable via Object_GetMetadata.</param>
-		public void MssObject_Upload(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, byte[] ssContent, string ssContentType, RLGCS_MetadataEntryRecordList ssMetadata)
+		public void MssObject_Upload(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, byte[] ssContent, string ssContentType, RLGCS_MetadataEntryRecordList ssMetadata)
 		{
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 
 			try
 			{
@@ -615,23 +1022,22 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					storageClient.UploadObject(gcsObject, stream);
 				}
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssObject_Upload
 
 		/// <summary>
 		/// Downloads an object from a bucket.
 		/// </summary>
-		/// <param name="ssProjectId"></param>
-		/// <param name="ssClientEmail"></param>
-		/// <param name="ssPrivateKey"></param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssObjectName"></param>
 		/// <param name="ssContent"></param>
 		/// <param name="ssContentType"></param>
-		public void MssObject_Download(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssObjectName, out byte[] ssContent, out string ssContentType)
+		public void MssObject_Download(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, out byte[] ssContent, out string ssContentType)
 		{
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 
 			try
 			{
@@ -642,17 +1048,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					ssContentType = obj.ContentType;
 				}
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, ssObjectName); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, ssObjectName); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssObject_Download
 
 		/// <summary>
 		/// Lists objects in a bucket with an optional prefix filter, with support for
 		/// pagination (MaxResults/PageToken) and folder-style navigation (Delimiter).
 		/// </summary>
-		/// <param name="ssProjectId"></param>
-		/// <param name="ssClientEmail"></param>
-		/// <param name="ssPrivateKey"></param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssPrefix"></param>
 		/// <param name="ssMaxResults">Maximum number of results for this call; 0 returns everything.</param>
@@ -661,9 +1065,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssObjectList"></param>
 		/// <param name="ssNextPageToken">Non-empty when more results exist (only in paged mode).</param>
 		/// <param name="ssPrefixList">The "folders" directly under Prefix when Delimiter is set.</param>
-		public void MssObject_List(string ssProjectId, string ssClientEmail, string ssPrivateKey, string ssBucketName, string ssPrefix, int ssMaxResults, string ssPageToken, string ssDelimiter, out RLGCS_ObjectRecordList ssObjectList, out string ssNextPageToken, out RLGCS_PrefixRecordList ssPrefixList)
+		public void MssObject_List(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssPrefix, int ssMaxResults, string ssPageToken, string ssDelimiter, out RLGCS_ObjectRecordList ssObjectList, out string ssNextPageToken, out RLGCS_PrefixRecordList ssPrefixList)
 		{
-			var storageClient = GetStorageClient(ssProjectId, ssClientEmail, ssPrivateKey);
+			var auth = FromRecord(ssAuthentication);
+			var storageClient = GetStorageClient(auth);
 			ssObjectList = new RLGCS_ObjectRecordList();
 			ssPrefixList = new RLGCS_PrefixRecordList();
 			ssNextPageToken = "";
@@ -715,8 +1120,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					}
 				}
 			}
-			catch (Google.GoogleApiException e) { throw FriendlyException(e, ssClientEmail, ssBucketName, null); }
-			catch (TokenResponseException e) { throw FriendlyAuthException(e, ssClientEmail); }
+			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, null); }
+			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssObject_List
 
 	} // CssGoogleCloudStorage_ext

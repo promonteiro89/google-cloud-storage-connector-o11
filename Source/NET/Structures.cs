@@ -1432,4 +1432,447 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		}
 	} // STGCS_MetadataEntryStructure
 
+	/// <summary>
+	/// Structure <code>STGCS_AuthenticationStructure</code> that represents the Service Studio structure
+	///  <code>GCS_Authentication</code> <p> Description: Google Cloud credentials. Two methods ar
+	/// e supported: 'WorkloadIdentityFederation' (recommended, keyless) and 'ServiceAccountKey' (legacy:
+	///  ClientEmail + PrivateKey). Leave AuthenticationMethod empty to use ServiceAccountKey.</p>
+	/// </summary>
+	[Serializable()]
+	public partial struct STGCS_AuthenticationStructure: ISerializable, ITypedRecord<STGCS_AuthenticationStructure>, ISimpleRecord {
+		internal static readonly GlobalObjectKey IdProjectId = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*pFA_kJAr00iNfSn7++O_pw");
+		internal static readonly GlobalObjectKey IdAuthenticationMethod = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*P2OadTaoFEeu0eF98aYiuQ");
+		internal static readonly GlobalObjectKey IdClientEmail = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*0SEUzqyOF0WMGNoI0uSEzA");
+		internal static readonly GlobalObjectKey IdPrivateKey = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*ZVZjBAoEhUuPrnbN8Br9tg");
+		internal static readonly GlobalObjectKey IdWorkloadIdentityProvider = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*RogHe4P+WUutc9qWTu98tA");
+		internal static readonly GlobalObjectKey IdServiceAccountEmail = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*28SN1YcTxk6wxC13RSLdlA");
+		internal static readonly GlobalObjectKey IdTokenEndpoint = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*qIIN86k7fE+M4LqGxyHL8A");
+		internal static readonly GlobalObjectKey IdClientId = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*jpWVqo9KeEG1rwwlOL9eFw");
+		internal static readonly GlobalObjectKey IdClientSecret = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*2g2bP_65pEmbxnWghkKu3A");
+		internal static readonly GlobalObjectKey IdScope = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*Hxu9iaHxMkmv+3XRFfTwgg");
+		internal static readonly GlobalObjectKey IdAudience = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*PDTZVirpqUaLJd6S+5C5hA");
+		internal static readonly GlobalObjectKey IdSubjectToken = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*y+LSoXvlKUS5rOXUsJTiHA");
+
+		public static void EnsureInitialized() {}
+		[System.Xml.Serialization.XmlElement("ProjectId")]
+		public string ssProjectId;
+
+		[System.Xml.Serialization.XmlElement("AuthenticationMethod")]
+		public string ssAuthenticationMethod;
+
+		[System.Xml.Serialization.XmlElement("ClientEmail")]
+		public string ssClientEmail;
+
+		[System.Xml.Serialization.XmlElement("PrivateKey")]
+		public string ssPrivateKey;
+
+		[System.Xml.Serialization.XmlElement("WorkloadIdentityProvider")]
+		public string ssWorkloadIdentityProvider;
+
+		[System.Xml.Serialization.XmlElement("ServiceAccountEmail")]
+		public string ssServiceAccountEmail;
+
+		[System.Xml.Serialization.XmlElement("TokenEndpoint")]
+		public string ssTokenEndpoint;
+
+		[System.Xml.Serialization.XmlElement("ClientId")]
+		public string ssClientId;
+
+		[System.Xml.Serialization.XmlElement("ClientSecret")]
+		public string ssClientSecret;
+
+		[System.Xml.Serialization.XmlElement("Scope")]
+		public string ssScope;
+
+		[System.Xml.Serialization.XmlElement("Audience")]
+		public string ssAudience;
+
+		[System.Xml.Serialization.XmlElement("SubjectToken")]
+		public string ssSubjectToken;
+
+
+		public BitArray OptimizedAttributes;
+
+		public STGCS_AuthenticationStructure(params string[] dummy) {
+			OptimizedAttributes = null;
+			ssProjectId = "";
+			ssAuthenticationMethod = "ServiceAccountKey";
+			ssClientEmail = "";
+			ssPrivateKey = "";
+			ssWorkloadIdentityProvider = "";
+			ssServiceAccountEmail = "";
+			ssTokenEndpoint = "";
+			ssClientId = "";
+			ssClientSecret = "";
+			ssScope = "";
+			ssAudience = "";
+			ssSubjectToken = "";
+		}
+
+		public BitArray[] GetDefaultOptimizedValues() {
+			BitArray[] all = new BitArray[0];
+			return all;
+		}
+
+		public BitArray[] AllOptimizedAttributes {
+			set {
+				if (value == null) {
+				} else {
+				}
+			}
+			get {
+				BitArray[] all = new BitArray[0];
+				return all;
+			}
+		}
+
+		/// <summary>
+		/// Read a record from database
+		/// </summary>
+		/// <param name="r"> Data base reader</param>
+		/// <param name="index"> index</param>
+		public void Read(IDataReader r, ref int index) {
+			ssProjectId = r.ReadText(index++, "GCS_Authentication.ProjectId", "");
+			ssAuthenticationMethod = r.ReadText(index++, "GCS_Authentication.AuthenticationMethod", "");
+			ssClientEmail = r.ReadText(index++, "GCS_Authentication.ClientEmail", "");
+			ssPrivateKey = r.ReadText(index++, "GCS_Authentication.PrivateKey", "");
+			ssWorkloadIdentityProvider = r.ReadText(index++, "GCS_Authentication.WorkloadIdentityProvider", "");
+			ssServiceAccountEmail = r.ReadText(index++, "GCS_Authentication.ServiceAccountEmail", "");
+			ssTokenEndpoint = r.ReadText(index++, "GCS_Authentication.TokenEndpoint", "");
+			ssClientId = r.ReadText(index++, "GCS_Authentication.ClientId", "");
+			ssClientSecret = r.ReadText(index++, "GCS_Authentication.ClientSecret", "");
+			ssScope = r.ReadText(index++, "GCS_Authentication.Scope", "");
+			ssAudience = r.ReadText(index++, "GCS_Authentication.Audience", "");
+			ssSubjectToken = r.ReadText(index++, "GCS_Authentication.SubjectToken", "");
+		}
+		/// <summary>
+		/// Read from database
+		/// </summary>
+		/// <param name="r"> Data reader</param>
+		public void ReadDB(IDataReader r) {
+			int index = 0;
+			Read(r, ref index);
+		}
+
+		/// <summary>
+		/// Read from record
+		/// </summary>
+		/// <param name="r"> Record</param>
+		public void ReadIM(STGCS_AuthenticationStructure r) {
+			this = r;
+		}
+
+
+		public static bool operator == (STGCS_AuthenticationStructure a, STGCS_AuthenticationStructure b) {
+			if (a.ssProjectId != b.ssProjectId) return false;
+			if (a.ssAuthenticationMethod != b.ssAuthenticationMethod) return false;
+			if (a.ssClientEmail != b.ssClientEmail) return false;
+			if (a.ssPrivateKey != b.ssPrivateKey) return false;
+			if (a.ssWorkloadIdentityProvider != b.ssWorkloadIdentityProvider) return false;
+			if (a.ssServiceAccountEmail != b.ssServiceAccountEmail) return false;
+			if (a.ssTokenEndpoint != b.ssTokenEndpoint) return false;
+			if (a.ssClientId != b.ssClientId) return false;
+			if (a.ssClientSecret != b.ssClientSecret) return false;
+			if (a.ssScope != b.ssScope) return false;
+			if (a.ssAudience != b.ssAudience) return false;
+			if (a.ssSubjectToken != b.ssSubjectToken) return false;
+			return true;
+		}
+
+		public static bool operator != (STGCS_AuthenticationStructure a, STGCS_AuthenticationStructure b) {
+			return !(a==b);
+		}
+
+		public override bool Equals(object o) {
+			if (o.GetType() != typeof(STGCS_AuthenticationStructure)) return false;
+			return (this == (STGCS_AuthenticationStructure) o);
+		}
+
+		public override int GetHashCode() {
+			try {
+				return base.GetHashCode()
+				^ ssProjectId.GetHashCode()
+				^ ssAuthenticationMethod.GetHashCode()
+				^ ssClientEmail.GetHashCode()
+				^ ssPrivateKey.GetHashCode()
+				^ ssWorkloadIdentityProvider.GetHashCode()
+				^ ssServiceAccountEmail.GetHashCode()
+				^ ssTokenEndpoint.GetHashCode()
+				^ ssClientId.GetHashCode()
+				^ ssClientSecret.GetHashCode()
+				^ ssScope.GetHashCode()
+				^ ssAudience.GetHashCode()
+				^ ssSubjectToken.GetHashCode()
+				;
+			} catch {
+				return base.GetHashCode();
+			}
+		}
+
+		public void GetObjectData(SerializationInfo info, StreamingContext context) {
+			Type objInfo = this.GetType();
+			FieldInfo[] fields;
+			fields = objInfo.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			for (int i = 0; i < fields.Length; i++)
+			if (fields[i] .FieldType.IsSerializable)
+			info.AddValue(fields[i] .Name, fields[i] .GetValue(this));
+		}
+
+		public STGCS_AuthenticationStructure(SerializationInfo info, StreamingContext context) {
+			OptimizedAttributes = null;
+			ssProjectId = "";
+			ssAuthenticationMethod = "ServiceAccountKey";
+			ssClientEmail = "";
+			ssPrivateKey = "";
+			ssWorkloadIdentityProvider = "";
+			ssServiceAccountEmail = "";
+			ssTokenEndpoint = "";
+			ssClientId = "";
+			ssClientSecret = "";
+			ssScope = "";
+			ssAudience = "";
+			ssSubjectToken = "";
+			Type objInfo = this.GetType();
+			FieldInfo fieldInfo = null;
+			fieldInfo = objInfo.GetField("ssProjectId", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssProjectId' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssProjectId = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssAuthenticationMethod", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssAuthenticationMethod' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssAuthenticationMethod = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssClientEmail", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssClientEmail' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssClientEmail = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssPrivateKey", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssPrivateKey' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssPrivateKey = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssWorkloadIdentityProvider", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssWorkloadIdentityProvider' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssWorkloadIdentityProvider = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssServiceAccountEmail", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssServiceAccountEmail' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssServiceAccountEmail = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssTokenEndpoint", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssTokenEndpoint' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssTokenEndpoint = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssClientId", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssClientId' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssClientId = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssClientSecret", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssClientSecret' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssClientSecret = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssScope", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssScope' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssScope = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssAudience", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssAudience' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssAudience = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssSubjectToken", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssSubjectToken' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssSubjectToken = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+		}
+
+		public void RecursiveReset() {
+		}
+
+		public void InternalRecursiveSave() {
+		}
+
+
+		public STGCS_AuthenticationStructure Duplicate() {
+			STGCS_AuthenticationStructure t;
+			t.ssProjectId = this.ssProjectId;
+			t.ssAuthenticationMethod = this.ssAuthenticationMethod;
+			t.ssClientEmail = this.ssClientEmail;
+			t.ssPrivateKey = this.ssPrivateKey;
+			t.ssWorkloadIdentityProvider = this.ssWorkloadIdentityProvider;
+			t.ssServiceAccountEmail = this.ssServiceAccountEmail;
+			t.ssTokenEndpoint = this.ssTokenEndpoint;
+			t.ssClientId = this.ssClientId;
+			t.ssClientSecret = this.ssClientSecret;
+			t.ssScope = this.ssScope;
+			t.ssAudience = this.ssAudience;
+			t.ssSubjectToken = this.ssSubjectToken;
+			t.OptimizedAttributes = null;
+			return t;
+		}
+
+		IRecord IRecord.Duplicate() {
+			return Duplicate();
+		}
+
+		public void ToXml(Object parent, System.Xml.XmlElement baseElem, String fieldName, int detailLevel) {
+			System.Xml.XmlElement recordElem = VarValue.AppendChild(baseElem, "Structure");
+			if (fieldName != null) {
+				VarValue.AppendAttribute(recordElem, "debug.field", fieldName);
+				fieldName = fieldName.ToLowerInvariant();
+			}
+			if (detailLevel > 0) {
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".ProjectId")) VarValue.AppendAttribute(recordElem, "ProjectId", ssProjectId, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "ProjectId");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".AuthenticationMethod")) VarValue.AppendAttribute(recordElem, "AuthenticationMethod", ssAuthenticationMethod, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "AuthenticationMethod");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".ClientEmail")) VarValue.AppendAttribute(recordElem, "ClientEmail", ssClientEmail, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "ClientEmail");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".PrivateKey")) VarValue.AppendAttribute(recordElem, "PrivateKey", ssPrivateKey, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "PrivateKey");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".WorkloadIdentityProvider")) VarValue.AppendAttribute(recordElem, "WorkloadIdentityProvider", ssWorkloadIdentityProvider, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "WorkloadIdentityProvider");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".ServiceAccountEmail")) VarValue.AppendAttribute(recordElem, "ServiceAccountEmail", ssServiceAccountEmail, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "ServiceAccountEmail");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".TokenEndpoint")) VarValue.AppendAttribute(recordElem, "TokenEndpoint", ssTokenEndpoint, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "TokenEndpoint");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".ClientId")) VarValue.AppendAttribute(recordElem, "ClientId", ssClientId, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "ClientId");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".ClientSecret")) VarValue.AppendAttribute(recordElem, "ClientSecret", ssClientSecret, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "ClientSecret");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".Scope")) VarValue.AppendAttribute(recordElem, "Scope", ssScope, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "Scope");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".Audience")) VarValue.AppendAttribute(recordElem, "Audience", ssAudience, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "Audience");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".SubjectToken")) VarValue.AppendAttribute(recordElem, "SubjectToken", ssSubjectToken, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "SubjectToken");
+			} else {
+				VarValue.AppendDeferredEvaluationElement(recordElem);
+			}
+		}
+
+		public void EvaluateFields(VarValue variable, Object parent, String baseName, String fields) {
+			String head = VarValue.GetHead(fields);
+			String tail = VarValue.GetTail(fields);
+			variable.Found = false;
+			if (head == "projectid") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".ProjectId")) variable.Value = ssProjectId; else variable.Optimized = true;
+			} else if (head == "authenticationmethod") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".AuthenticationMethod")) variable.Value = ssAuthenticationMethod; else variable.Optimized = true;
+			} else if (head == "clientemail") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".ClientEmail")) variable.Value = ssClientEmail; else variable.Optimized = true;
+			} else if (head == "privatekey") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".PrivateKey")) variable.Value = ssPrivateKey; else variable.Optimized = true;
+			} else if (head == "workloadidentityprovider") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".WorkloadIdentityProvider")) variable.Value = ssWorkloadIdentityProvider; else variable.Optimized = true;
+			} else if (head == "serviceaccountemail") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".ServiceAccountEmail")) variable.Value = ssServiceAccountEmail; else variable.Optimized = true;
+			} else if (head == "tokenendpoint") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".TokenEndpoint")) variable.Value = ssTokenEndpoint; else variable.Optimized = true;
+			} else if (head == "clientid") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".ClientId")) variable.Value = ssClientId; else variable.Optimized = true;
+			} else if (head == "clientsecret") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".ClientSecret")) variable.Value = ssClientSecret; else variable.Optimized = true;
+			} else if (head == "scope") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".Scope")) variable.Value = ssScope; else variable.Optimized = true;
+			} else if (head == "audience") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".Audience")) variable.Value = ssAudience; else variable.Optimized = true;
+			} else if (head == "subjecttoken") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".SubjectToken")) variable.Value = ssSubjectToken; else variable.Optimized = true;
+			}
+			if (variable.Found && tail != null) variable.EvaluateFields(this, head, tail);
+		}
+
+		public bool ChangedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public bool OptimizedAttributeGet(GlobalObjectKey key) {
+			throw new Exception("Method not Supported");
+		}
+
+		public object AttributeGet(GlobalObjectKey key) {
+			if (key == IdProjectId) {
+				return ssProjectId;
+			} else if (key == IdAuthenticationMethod) {
+				return ssAuthenticationMethod;
+			} else if (key == IdClientEmail) {
+				return ssClientEmail;
+			} else if (key == IdPrivateKey) {
+				return ssPrivateKey;
+			} else if (key == IdWorkloadIdentityProvider) {
+				return ssWorkloadIdentityProvider;
+			} else if (key == IdServiceAccountEmail) {
+				return ssServiceAccountEmail;
+			} else if (key == IdTokenEndpoint) {
+				return ssTokenEndpoint;
+			} else if (key == IdClientId) {
+				return ssClientId;
+			} else if (key == IdClientSecret) {
+				return ssClientSecret;
+			} else if (key == IdScope) {
+				return ssScope;
+			} else if (key == IdAudience) {
+				return ssAudience;
+			} else if (key == IdSubjectToken) {
+				return ssSubjectToken;
+			} else {
+				throw new Exception("Invalid key");
+			}
+		}
+		public void FillFromOther(IRecord other) {
+			if (other == null) return;
+			ssProjectId = (string) other.AttributeGet(IdProjectId);
+			ssAuthenticationMethod = (string) other.AttributeGet(IdAuthenticationMethod);
+			ssClientEmail = (string) other.AttributeGet(IdClientEmail);
+			ssPrivateKey = (string) other.AttributeGet(IdPrivateKey);
+			ssWorkloadIdentityProvider = (string) other.AttributeGet(IdWorkloadIdentityProvider);
+			ssServiceAccountEmail = (string) other.AttributeGet(IdServiceAccountEmail);
+			ssTokenEndpoint = (string) other.AttributeGet(IdTokenEndpoint);
+			ssClientId = (string) other.AttributeGet(IdClientId);
+			ssClientSecret = (string) other.AttributeGet(IdClientSecret);
+			ssScope = (string) other.AttributeGet(IdScope);
+			ssAudience = (string) other.AttributeGet(IdAudience);
+			ssSubjectToken = (string) other.AttributeGet(IdSubjectToken);
+		}
+		public bool IsDefault() {
+			STGCS_AuthenticationStructure defaultStruct = new STGCS_AuthenticationStructure(null);
+			if (this.ssProjectId != defaultStruct.ssProjectId) return false;
+			if (this.ssAuthenticationMethod != defaultStruct.ssAuthenticationMethod) return false;
+			if (this.ssClientEmail != defaultStruct.ssClientEmail) return false;
+			if (this.ssPrivateKey != defaultStruct.ssPrivateKey) return false;
+			if (this.ssWorkloadIdentityProvider != defaultStruct.ssWorkloadIdentityProvider) return false;
+			if (this.ssServiceAccountEmail != defaultStruct.ssServiceAccountEmail) return false;
+			if (this.ssTokenEndpoint != defaultStruct.ssTokenEndpoint) return false;
+			if (this.ssClientId != defaultStruct.ssClientId) return false;
+			if (this.ssClientSecret != defaultStruct.ssClientSecret) return false;
+			if (this.ssScope != defaultStruct.ssScope) return false;
+			if (this.ssAudience != defaultStruct.ssAudience) return false;
+			if (this.ssSubjectToken != defaultStruct.ssSubjectToken) return false;
+			return true;
+		}
+	} // STGCS_AuthenticationStructure
+
 } // OutSystems.NssGoogleCloudStorage_ext

@@ -1,19 +1,12 @@
 name: NuGet update watch
 
-# Opens an issue when any bundled Google.* package has a newer stable release on
-# NuGet, so the SDK never silently ages. Dependencies live as plain DLLs in
-# Source/NET/Bin (no PackageReference), so Dependabot cannot track them.
+# Opens (or updates) one issue when a Google.* package referenced in the csproj has a newer
+# stable release on NuGet. The DLLs live in Source/NET/Bin without PackageReference, so
+# Dependabot can't track them. All Google.* references are checked, since the transitive
+# packages release independently of Google.Cloud.Storage.V1.
 #
-# Every Google.* <Reference> in the csproj is checked, not just the headline
-# Google.Cloud.Storage.V1 package: the transitive packages (Google.Apis.*,
-# Google.Api.Gax*) release on their own cadence and drifted two versions behind
-# while Storage.V1 itself stayed put.
-#
-# Not watched on purpose:
-#   Newtonsoft.Json  - Integration Studio replaces it with the OutSystems
-#                      platform's own copy at publish time.
-#   System.* / Microsoft.*  - satisfied well above the SDK's minimums and
-#                      pinned by what the platform provides.
+# Not checked: Newtonsoft.Json (its version follows the OutSystems platform) and System.* /
+# Microsoft.* (already well above the SDK's minimums). Both are updated by hand.
 
 on:
   schedule:
