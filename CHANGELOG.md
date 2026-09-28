@@ -2,7 +2,7 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [1.6.0] - Unreleased
+## [1.6.0] - 2026-09-28
 
 Adds keyless authentication with Workload Identity Federation next to service account keys, with one `GCS_Authentication` record per action. This release is breaking; see Migration.
 
