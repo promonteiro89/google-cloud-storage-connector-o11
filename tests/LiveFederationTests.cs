@@ -1,9 +1,5 @@
-// End-to-end Workload Identity Federation against REAL Google Cloud, with no Google key anywhere.
-// GitHub Actions is the identity provider: the workflow's OIDC token is exchanged with Google STS,
-// the extension impersonates the sandbox service account, and calls real Storage / signBlob.
-// Runs only with -Category Live inside GitHub Actions ('id-token: write' + the GCP_* repository
-// variables). Port of the ODC connector's LiveFederationTests.cs, rewritten for .NET Framework 4.8
-// (the ODC verifier uses .NET 10-only crypto APIs). C# 5 syntax only.
+// Live Workload Identity Federation against real Google Cloud, with GitHub Actions as the identity
+// provider. Runs with -Category Live; skipped outside GitHub Actions. C# 5 only.
 
 using System;
 using System.Collections.Generic;
@@ -143,8 +139,7 @@ public static class LiveFederationTests
     }
 
     /// <summary>
-    /// Recomputes the V4 string-to-sign from the URL itself and verifies the RSA-SHA256 signature,
-    /// which is exactly what Google Cloud Storage does when the URL is used.
+    /// Rebuilds the V4 string-to-sign from the URL and verifies the RSA-SHA256 signature, as GCS does.
     /// </summary>
     public static bool VerifyV4SignedUrl(string url, IEnumerable<RSA> publicKeys)
     {
@@ -168,9 +163,7 @@ public static class LiveFederationTests
     }
 
     /// <summary>
-    /// Proves the verifier is correct, offline: a URL signed locally with the throwaway test key must
-    /// verify, and a tampered one must not. So if the live test ever fails, the cause is the
-    /// federation chain, not the verifier.
+    /// Offline check of the verifier: a URL signed with the test key verifies, a tampered one doesn't.
     /// </summary>
     public static void VerifierSelfTest(string email, string pem)
     {

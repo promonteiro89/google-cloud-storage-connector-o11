@@ -1,10 +1,5 @@
-// Test harness for the Google Cloud Storage Connector (OutSystems 11 extension).
-// Compiled by tests\run-tests.ps1 with Add-Type against the built extension DLL.
-// C# 5 syntax only (Windows PowerShell 5.1 uses the .NET Framework compiler).
-//
-// Exercises the extension exactly as OutSystems developers consume it: through the
-// public Mss* action methods. Integration tests target a local fake-gcs-server via
-// GCSCONNECTOR_EMULATOR_HOST; signing/caching/validation tests are fully offline.
+// Test harness, compiled by run-tests.ps1 (Add-Type) against the built extension and calling its
+// public Mss* actions. C# 5 only: Windows PowerShell 5.1 uses the .NET Framework compiler.
 
 using System;
 using System.Collections.Generic;

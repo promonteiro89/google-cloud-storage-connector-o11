@@ -249,22 +249,11 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			catch (Google.GoogleApiException e) { throw FriendlyException(e, auth, ssBucketName, ssObjectName); }
 			catch (TokenResponseException e) { throw FriendlyAuthException(e, auth); }
 		} // MssObject_GetMetadata
-		// =====================================================================================
-		// Authentication
-		//
-		// Two methods, identical to the ODC connector:
-		//  - WorkloadIdentityFederation (recommended): no Google key exists anywhere. The extension
-		//    obtains a JWT from any OIDC identity provider (OAuth 2.0 client-credentials grant, or a
-		//    token the caller supplies), exchanges it with Google's Security Token Service, and
-		//    impersonates a service account for a short-lived access token. Signed URLs are signed
-		//    through the IAM Credentials signBlob API.
-		//  - ServiceAccountKey (legacy, Google's last resort): ClientEmail + PrivateKey from a service
-		//    account JSON key. Signed URLs are signed locally. This remains the default.
-		//
-		// Every action takes one Authentication record (Authentication), field for field the
-		// ODC connector's Authentication structure. Leave AuthenticationMethod empty for
-		// ServiceAccountKey.
-		// =====================================================================================
+		// ---- Authentication --------------------------------------------------------------
+		// WorkloadIdentityFederation: IdP JWT (client credentials or SubjectToken) -> Google STS ->
+		// service account impersonation; URLs signed through IAM signBlob.
+		// ServiceAccountKey (default when AuthenticationMethod is empty): ClientEmail + PrivateKey;
+		// URLs signed locally.
 
 		internal const string MethodServiceAccountKey = "ServiceAccountKey";
 		internal const string MethodWorkloadIdentityFederation = "WorkloadIdentityFederation";
@@ -324,12 +313,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		}
 
 		/// <summary>
-		/// Caches of StorageClient/UrlSigner instances per credential. Extension actions run on every
-		/// request, and creating a client per call re-parses keys (or re-runs the token exchange) and
-		/// allocates a new HttpClient each time (latency + socket exhaustion under load). Statics survive
-		/// across requests in the app domain, and StorageClient, UrlSigner and the Google credentials are
-		/// thread-safe. Keys are SHA-256 hashes, so raw secrets are never retained as cache keys. The two
-		/// methods use distinct key prefixes, so they can never share a cached client.
+		/// Per-credential caches (the clients are thread-safe). Creating a client per call re-parses the
+		/// key or re-runs the token exchange and opens a new HttpClient, which exhausts sockets under load.
+		/// Keys are SHA-256 hashes with a per-method prefix, so secrets aren't kept and methods never mix.
 		/// </summary>
 		private static readonly ConcurrentDictionary<string, StorageClient> StorageClientCache = new ConcurrentDictionary<string, StorageClient>();
 		private static readonly ConcurrentDictionary<string, UrlSigner> UrlSignerCache = new ConcurrentDictionary<string, UrlSigner>();
@@ -447,12 +433,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		// ---- Client factories --------------------------------------------------------------
 
 		/// <summary>
-		/// Returns a cached StorageClient for the given credentials, creating it on first use.
-		/// Honors the GCSCONNECTOR_EMULATOR_HOST environment variable (never set on a real
-		/// OutSystems server): when present, connects unauthenticated to a local GCS emulator
-		/// such as fake-gcs-server, enabling integration tests without Google credentials.
-		/// The name is deliberately extension-specific (not Google's STORAGE_EMULATOR_HOST) so a
-		/// machine-wide variable set for other tooling can never silently redirect this extension.
+		/// Returns the cached StorageClient for the credentials. When GCSCONNECTOR_EMULATOR_HOST is set
+		/// (tests only), connects unauthenticated to that emulator instead. The name is deliberately not
+		/// Google's STORAGE_EMULATOR_HOST, so a variable set for other tools can't redirect production.
 		/// </summary>
 		private static StorageClient GetStorageClient(AuthConfig a)
 		{
@@ -567,10 +550,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		}
 
 		/// <summary>
-		/// Supplies the identity-provider JWT to Google's STS exchange: either the token the caller passed
-		/// in (SubjectToken), or one obtained with the standard OAuth 2.0 client-credentials grant
-		/// (RFC 6749 section 4.4), which is the same call on Entra ID, Okta, Auth0, Keycloak and others.
-		/// Tokens are cached until shortly before they expire.
+		/// Supplies the JWT for the STS exchange: the caller's SubjectToken, or one from the OAuth 2.0
+		/// client-credentials grant (RFC 6749 4.4), cached until shortly before it expires.
 		/// </summary>
 		private sealed class SubjectTokenSource : ProgrammaticExternalAccountCredential.ISubjectTokenProvider
 		{
@@ -762,11 +743,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		}
 
 		/// <summary>
-		/// Parses a GCS RFC3339 timestamp defensively. The SDK's *DateTimeOffset properties use a
-		/// strict format (exactly what production GCS emits); parsing the raw string with a flexible
-		/// parser also tolerates emulators (e.g. fake-gcs-server emits microsecond precision with a
-		/// local UTC offset) and any future format drift. Returns 1900-01-01 (the OutSystems null
-		/// date) when missing or unparseable.
+		/// Parses an RFC 3339 timestamp. The SDK's *DateTimeOffset properties only accept GCS's exact
+		/// format and fail on others (e.g. fake-gcs-server's microseconds with a local offset).
+		/// Returns 1900-01-01, the OutSystems null date, when missing or unparseable.
 		/// </summary>
 		private static DateTime ParseTimestamp(string raw)
 		{

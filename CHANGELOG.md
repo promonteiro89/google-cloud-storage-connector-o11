@@ -1,42 +1,42 @@
 # Changelog
 
-All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/) and are independent of the ODC connector's versions.
+All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [1.6.0] - Unreleased
 
-Keyless authentication with Workload Identity Federation, alongside the existing service account key, with one `GCS_Authentication` record per action, with exactly the same attributes as the ODC connector's `Authentication` structure. **This is a breaking release**: see Migration below.
+Adds keyless authentication with Workload Identity Federation next to service account keys, with one `GCS_Authentication` record per action. This release is breaking; see Migration.
 
 ### Breaking
 
-- The flat `ProjectId`, `ClientEmail` and `PrivateKey` inputs were **removed from all 15 actions** and replaced by a single mandatory `Authentication` input (a `GCS_Authentication` record). Every existing call must be updated; see Migration.
+- The `ProjectId`, `ClientEmail` and `PrivateKey` inputs are removed from all 15 actions and replaced by one mandatory `Authentication` input (a `GCS_Authentication` record). Every existing call must be updated.
 
 ### Added
 
-- **Workload Identity Federation** (Google's recommended method for workloads outside Google Cloud). Set `AuthenticationMethod` to `WorkloadIdentityFederation` and no Google key exists anywhere: the extension obtains a JWT from **any OIDC identity provider** (Entra ID, Okta, Auth0, Keycloak, …), exchanges it with Google's Security Token Service, and impersonates a service account for a short-lived access token.
-  - **Server-side, no user interaction:** tokens come from the standard OAuth 2.0 **client-credentials** grant (`TokenEndpoint`, `ClientId`, `ClientSecret`, optional `Scope` / `Audience`). It uses `client_secret_post`, with an automatic fallback to `client_secret_basic`.
-  - **Bring your own token:** alternatively, pass a JWT in `SubjectToken`.
-  - **Signed URLs** are signed by the service account through the IAM Credentials `signBlob` API (needs `Service Account Token Creator`).
-  - Tokens are cached and refreshed automatically a minute before they expire.
-- New `GCS_Authentication` structure, with the same attributes as the ODC connector's `Authentication`: `ProjectId`, `AuthenticationMethod`, `ClientEmail`, `PrivateKey`, `WorkloadIdentityProvider`, `ServiceAccountEmail`, `TokenEndpoint`, `ClientId`, `ClientSecret`, `Scope`, `Audience`, `SubjectToken`. An empty `AuthenticationMethod` means `ServiceAccountKey`.
-- Actionable errors for the new failure modes: missing fields for the chosen method, a malformed provider, the identity provider rejecting the client, a non-JWT token, Google rejecting the token exchange (issuer/audience/attribute condition), and a missing Token Creator role for signing.
-- Tests: validation and federation protocol contract tests (a fake identity provider, STS, IAM Credentials and Storage; every hop asserted), plus a **live** CI job that runs keyless against real Google Cloud using GitHub's OIDC token.
+- Workload Identity Federation, Google's recommended method for workloads outside Google Cloud. With `AuthenticationMethod` set to `WorkloadIdentityFederation`, no Google key is used: the extension gets a JWT from an OIDC identity provider (Entra ID, Okta, Auth0, Keycloak and others), exchanges it with Google's Security Token Service, and impersonates a service account for a short-lived access token.
+  - The JWT comes from the OAuth 2.0 client-credentials grant (`TokenEndpoint`, `ClientId`, `ClientSecret`, optional `Scope` / `Audience`), so no user interaction is needed. It uses `client_secret_post` and falls back to `client_secret_basic`.
+  - Or pass a JWT you already have in `SubjectToken`.
+  - Signed URLs are signed by the service account through the IAM Credentials `signBlob` API, which needs `Service Account Token Creator`.
+  - Tokens are cached and refreshed a minute before they expire.
+- `GCS_Authentication` structure: `ProjectId`, `AuthenticationMethod`, `ClientEmail`, `PrivateKey`, `WorkloadIdentityProvider`, `ServiceAccountEmail`, `TokenEndpoint`, `ClientId`, `ClientSecret`, `Scope`, `Audience`, `SubjectToken`. An empty `AuthenticationMethod` means `ServiceAccountKey`.
+- Error messages for the new failure cases: missing fields for the chosen method, a malformed provider, the identity provider rejecting the client, a non-JWT token, Google rejecting the token exchange (issuer, audience or attribute condition), and a missing Token Creator role when signing.
+- Tests: contract tests of the federation protocol against a fake identity provider, STS, IAM Credentials and Storage, and a CI job that runs the chain against real Google Cloud with GitHub's OIDC token.
 
 ### Changed
 
-- `ProjectId` is validated by `Bucket_List` and `Bucket_Create`, the only actions that use it.
-- The unauthenticated / access-denied messages now name the identity actually in use and give hints for whichever method is configured.
-- Clients and signers are cached per credential with method-specific keys, so a key and a federated identity can never share a cached client.
+- `Bucket_List` and `Bucket_Create`, the only actions that use `ProjectId`, now check that it is set.
+- Access-denied and unauthenticated errors name the identity in use and give hints for the configured method.
+- Clients and signers are cached per credential with a key per method, so a key and a federated identity never share a client.
 
 ### Migration from 1.5.x and earlier
 
-Behaviour with a service account key is unchanged; only the way credentials are passed changes.
+Behaviour with a service account key doesn't change; only the way credentials are passed does.
 
 1. Refresh the extension dependency in each consumer module.
-2. In one place, build the record: for example a server action or function `GetGcsAuthentication` that returns a `GCS_Authentication` record with `ProjectId`, `ClientEmail` and `PrivateKey` taken from the Site Properties you use today, and `AuthenticationMethod` left empty.
-3. On every call to the extension, set the new `Authentication` input to that record (the old `ProjectId`, `ClientEmail` and `PrivateKey` arguments are gone).
+2. Build the record in one place, for example a server action `GetGcsAuthentication` that returns a `GCS_Authentication` record with `ProjectId`, `ClientEmail` and `PrivateKey` from the Site Properties you use today and `AuthenticationMethod` empty.
+3. On every call to the extension, set the `Authentication` input to that record. The old `ProjectId`, `ClientEmail` and `PrivateKey` arguments no longer exist.
 4. Republish the consumer modules.
 
-To go keyless later, change only that one record: set `AuthenticationMethod` to `WorkloadIdentityFederation` and fill the federation fields.
+To switch to Workload Identity Federation later, change only that record: set `AuthenticationMethod` to `WorkloadIdentityFederation` and fill in the federation fields.
 
 ## [1.5.2] - 2026-09-01
 

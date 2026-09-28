@@ -67,11 +67,9 @@ jobs:
         run: .\tests\run-tests.ps1 -Download -Category Default
 
   live-federation:
-    # Keyless, against REAL Google Cloud: this workflow's GitHub OIDC token is exchanged through
-    # Workload Identity Federation for the sandbox service account. No Google key is involved; the
-    # GCP_* values are plain repository variables. The only secret is the read-only deploy key that
-    # fetches the proprietary OutSystems assemblies needed to compile. Fork PRs get neither an
-    # id-token nor the variables or secret, so the job only runs for pushes and same-repo PRs.
+    # Runs the federation chain against real Google Cloud with this run's GitHub OIDC token. The
+    # GCP_* values are variables; the only secret is the deploy key for the OutSystems assemblies.
+    # Fork PRs get no id-token, variables or secret, so the job runs for pushes and same-repo PRs.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-latest
     permissions:

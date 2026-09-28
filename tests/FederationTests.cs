@@ -1,8 +1,6 @@
-// Workload Identity Federation: input validation, backward compatibility of the method switch, the
-// Authentication record as sole credential input, cache isolation, and full protocol contract tests against an in-process
-// fake of the identity provider, Google STS, IAM Credentials and Storage. Fully offline.
-// Port of the ODC connector's FederationFakes.cs + FederationTests.cs.
-// C# 5 syntax only (Windows PowerShell 5.1 compiles the harness with the .NET Framework compiler).
+// Workload Identity Federation tests against an in-process fake of the identity provider, Google STS,
+// IAM Credentials and Storage: validation, the method switch, cache isolation and the protocol. Offline.
+// C# 5 only.
 
 using System;
 using System.Collections.Generic;
@@ -18,10 +16,8 @@ using Newtonsoft.Json;
 using OutSystems.NssGoogleCloudStorage_ext;
 
 /// <summary>
-/// A single in-process HTTP backend that impersonates every party in the Workload Identity
-/// Federation chain: the identity provider's token endpoint, Google STS, IAM Credentials
-/// (generateAccessToken + signBlob) and the Storage JSON API. Every request is recorded so tests
-/// can assert the exact protocol the extension speaks. No network is used.
+/// Plays every party in the federation chain (IdP token endpoint, STS, IAM Credentials
+/// generateAccessToken and signBlob, Storage) and records each request for the tests to check.
 /// </summary>
 public sealed class FakeFederationBackend : HttpMessageHandler
 {
@@ -310,7 +306,7 @@ public static class FederationTests
         return null;
     }
 
-    // ---- method switch & validation (ODC tests 1-11) -----------------------------------------
+    // ---- method switch & validation -----------------------------------------
 
     private static void MethodSwitchAndValidation(string email, string pem)
     {
