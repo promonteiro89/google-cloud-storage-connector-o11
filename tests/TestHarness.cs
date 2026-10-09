@@ -145,6 +145,9 @@ public static class GcsExtensionTestSuite
             TestLog.Section("Federation: credential inputs, validation, protocol contract (offline fakes)");
             FederationTests.Run(email, pem);
 
+            TestLog.Section("Upload integrity: CRC32C sent with uploads and checked by the server (offline fakes)");
+            UploadIntegrityTests.Run();
+
             TestLog.Section("Signed-URL verifier used by the live job (offline proof)");
             LiveFederationTests.VerifierSelfTest(email, pem);
         }

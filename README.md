@@ -42,6 +42,7 @@ Source/NET/
 - Two authentication methods: Workload Identity Federation (keyless, works with any OIDC identity provider) and service account keys. See [Authentication](#authentication).
 - Every action takes the same `GCS_Authentication` record, so changing the authentication method changes the record, not the calls.
 - `StorageClient` and `UrlSigner` instances are cached per credential and reused across requests. The cache key is a SHA-256 hash, never the secret itself, and the two methods never share an entry. Identity-provider tokens are refreshed a minute before they expire.
+- `Object_Upload` sends the CRC32C checksum of the exact bytes with the upload, and Google rejects the upload before storing anything if the data it received doesn't match. A corrupted object is never created, and an existing object is never overwritten with bad data.
 - Signed URLs (V4, GOOG4-RSA-SHA256) are signed locally with a service account key, or through the IAM `signBlob` API with Workload Identity Federation. Large transfers then go straight between the browser and GCS.
 - Credentials are action inputs, not extension settings, so one module can serve several projects and service accounts.
 
@@ -168,6 +169,8 @@ Uploads binary content to a bucket. Overwrites the object if it already exists.
 | `ContentType` | In | Text | MIME type, e.g. `application/pdf` |
 | `Metadata` | In | List of `GCS_MetadataEntry` | Optional custom key-value metadata to store with the object |
 
+The upload carries a CRC32C checksum of `Content`. If the data Google receives doesn't match, the action fails with an "Upload rejected by Google Cloud Storage ... retry the upload" error, nothing is stored, and any existing object with that name is left unchanged.
+
 #### `Object_Download`
 Downloads an object's content and content type.
 
@@ -276,6 +279,8 @@ Creates a time-limited V4 signed URL that lets a browser or other client read, w
 | `URL` | Out | Text | The signed URL. For `Upload`, the client sends an HTTP PUT with the file as the body |
 
 A signed URL covers one object path, so request one `Upload` URL per file.
+
+The client uses an `Upload` URL directly, without the extension, so `Object_Upload`'s automatic CRC32C check doesn't apply to it. To validate direct uploads end to end, follow Google's [data validation guide](https://cloud.google.com/storage/docs/data-validation) in the client.
 
 ---
 
@@ -393,6 +398,7 @@ The test suite in [tests/](tests/) covers every action and needs no Google accou
 
 - integration tests against the [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) emulator, through the `GCSCONNECTOR_EMULATOR_HOST` environment variable (never set on a real server);
 - offline tests for signing, validation and caching;
+- upload integrity tests: uploads carry the CRC32C of the exact bytes, and data corrupted in transit is rejected with a clear error, against an in-process fake of Google's resumable-upload endpoint;
 - contract tests of the Workload Identity Federation protocol against an in-process fake identity provider, STS, IAM Credentials and Storage.
 
 A separate CI job runs the federation chain against real Google Cloud, with GitHub's OIDC token as the identity provider.

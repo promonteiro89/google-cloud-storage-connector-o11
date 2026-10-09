@@ -4497,6 +4497,53 @@
         <member name="M:Google.Apis.Storage.v1.ObjectsResource.UpdateRequest.InitParameters">
             <summary>Initializes Update parameter list.</summary>
         </member>
+        <member name="M:Google.Apis.Storage.v1.ObjectsResource.ViewFullContext(System.String,System.String,System.String)">
+            <summary>Retrieves a specific object context with its extended data for a given object.</summary>
+            <param name="contextKey">Key identifying the object context to retrieve.</param>
+            <param name="bucket">Name of the bucket in which the object resides.</param>
+            <param name="storageObject">
+            Name of the object. For information about how to URL encode object names to be path safe, see [Encoding URI
+            Path Parts](https://cloud.google.com/storage/docs/request-endpoints#encoding).
+            </param>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest">
+            <summary>Retrieves a specific object context with its extended data for a given object.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.#ctor(Google.Apis.Services.IClientService,System.String,System.String,System.String)">
+            <summary>Constructs a new ViewFullContext request.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.ContextKey">
+            <summary>Key identifying the object context to retrieve.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.Bucket">
+            <summary>Name of the bucket in which the object resides.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.Object">
+            <summary>
+            Name of the object. For information about how to URL encode object names to be path safe, see [Encoding
+            URI Path Parts](https://cloud.google.com/storage/docs/request-endpoints#encoding).
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.Generation">
+            <summary>
+            If present, selects a specific revision of this object (as opposed to the latest version, the default).
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.UserProject">
+            <summary>The project to be billed for this request. Required for Requester Pays buckets.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.MethodName">
+            <summary>Gets the method name.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.HttpMethod">
+            <summary>Gets the HTTP method.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.RestPath">
+            <summary>Gets the REST path.</summary>
+        </member>
+        <member name="M:Google.Apis.Storage.v1.ObjectsResource.ViewFullContextRequest.InitParameters">
+            <summary>Initializes ViewFullContext parameter list.</summary>
+        </member>
         <member name="T:Google.Apis.Storage.v1.OperationsResource">
             <summary>The "operations" collection of methods.</summary>
         </member>
@@ -5880,11 +5927,42 @@
         <member name="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.EffectiveTime">
             <summary><seealso cref="T:System.DateTime"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.EffectiveTimeRaw"/>.</summary>
         </member>
+        <member name="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.HardDeletePause">
+            <summary>
+            The bucket's hard delete pause configuration. If set, soft-deleted objects in the bucket will not be
+            permanently deleted until the hard delete pause is disabled.
+            </summary>
+        </member>
         <member name="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.RetentionDurationSeconds">
             <summary>
             The duration in seconds that soft-deleted objects in the bucket will be retained and cannot be
             permanently deleted.
             </summary>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.HardDeletePauseData">
+            <summary>
+            The bucket's hard delete pause configuration. If set, soft-deleted objects in the bucket will not be
+            permanently deleted until the hard delete pause is disabled.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.HardDeletePauseData.EffectiveTimeRaw">
+            <summary>
+            Server-determined value that indicates the time from which the hard delete pause became effective.
+            This value is in RFC 3339 format.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.HardDeletePauseData.EffectiveTimeDateTimeOffset">
+            <summary>
+            <seealso cref="T:System.DateTimeOffset"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.HardDeletePauseData.EffectiveTimeRaw"/>.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.HardDeletePauseData.EffectiveTime">
+            <summary>
+            <seealso cref="T:System.DateTime"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.HardDeletePauseData.EffectiveTimeRaw"/>.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.Bucket.SoftDeletePolicyData.HardDeletePauseData.Enabled">
+            <summary>Whether hard deletions are paused.</summary>
         </member>
         <member name="T:Google.Apis.Storage.v1.Data.Bucket.VersioningData">
             <summary>The bucket's versioning configuration.</summary>
@@ -6967,6 +7045,9 @@
         <member name="P:Google.Apis.Storage.v1.Data.ObjectCustomContextPayload.CreateTime">
             <summary><seealso cref="T:System.DateTime"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.ObjectCustomContextPayload.CreateTimeRaw"/>.</summary>
         </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectCustomContextPayload.ExtendedDataTypeUrl">
+            <summary>The type URL of the object context's extended data.</summary>
+        </member>
         <member name="P:Google.Apis.Storage.v1.Data.ObjectCustomContextPayload.UpdateTimeRaw">
             <summary>The time at which the object context was last updated in RFC 3339 format.</summary>
         </member>
@@ -6980,6 +7061,47 @@
             <summary>The value of the object context.</summary>
         </member>
         <member name="P:Google.Apis.Storage.v1.Data.ObjectCustomContextPayload.ETag">
+            <summary>The ETag of the item.</summary>
+        </member>
+        <member name="T:Google.Apis.Storage.v1.Data.ObjectFullContext">
+            <summary>A full representation of an object context.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.CreateTimeRaw">
+            <summary>The time at which the object context was created. This value is in RFC 3339 format.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.CreateTimeDateTimeOffset">
+            <summary><seealso cref="T:System.DateTimeOffset"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.ObjectFullContext.CreateTimeRaw"/>.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.CreateTime">
+            <summary><seealso cref="T:System.DateTime"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.ObjectFullContext.CreateTimeRaw"/>.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.ExtendedData">
+            <summary>The extended data of the object context.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.Key">
+            <summary>The key of the object context.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.Kind">
+            <summary>
+            The kind of item this is. For ObjectFullContext, this is always storage#objectFullContext.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.Type">
+            <summary>The type of the object context.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.UpdateTimeRaw">
+            <summary>The time at which the object context was last updated. This value is in RFC 3339 format.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.UpdateTimeDateTimeOffset">
+            <summary><seealso cref="T:System.DateTimeOffset"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.ObjectFullContext.UpdateTimeRaw"/>.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.UpdateTime">
+            <summary><seealso cref="T:System.DateTime"/> representation of <see cref="P:Google.Apis.Storage.v1.Data.ObjectFullContext.UpdateTimeRaw"/>.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.Value">
+            <summary>The value of the object context.</summary>
+        </member>
+        <member name="P:Google.Apis.Storage.v1.Data.ObjectFullContext.ETag">
             <summary>The ETag of the item.</summary>
         </member>
         <member name="T:Google.Apis.Storage.v1.Data.Objects">

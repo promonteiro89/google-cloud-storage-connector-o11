@@ -6,6 +6,7 @@ Tests every action of the extension. The default run needs no Google account or 
 
 - Integration tests run the built extension DLL against [fake-gcs-server](https://github.com/fsouza/fake-gcs-server), a local in-memory Google Cloud Storage emulator. The extension talks to it only when the `GCSCONNECTOR_EMULATOR_HOST` environment variable is set, which never happens on an OutSystems server.
 - Offline tests (signed URLs, input validation, client caching) need no server: V4 signing is local RSA, done with a throwaway key generated on the first run.
+- Upload integrity tests drive `Object_Upload` through a fake of Google's resumable-upload endpoint that checks the `x-goog-hash` CRC32C the way the real server does.
 - Federation contract tests run Workload Identity Federation end to end against an in-process fake of every party: the identity provider's token endpoint, Google STS, IAM Credentials (`generateAccessToken` and `signBlob`) and Storage. The fake records every request, so the tests check the exact protocol. No network is used. The fake is plugged in through the extension's internal `HttpClientFactoryOverride` property, which is null unless a test sets it.
 - Live tests (`-Category Live`) run in GitHub Actions against real Google Cloud: the workflow's GitHub OIDC token is exchanged through Workload Identity Federation for a sandbox service account, and real Storage and `signBlob` are called.
 
@@ -48,6 +49,7 @@ Requirements:
 | `Object_GetSignedUrl` | V4 URL structure, case-insensitive operation, ContentType in the signature, expiration limits (0, over 7 days, exactly 7 days) |
 | Errors | Missing object and bucket, unparseable private key, negative `MaxResults` |
 | Caching | `StorageClient` and `UrlSigner` reuse, separate signers per credential, key and federation never sharing a client |
+| Upload integrity | Uploads send `x-goog-hash: crc32c=...` equal to an independent CRC32C of the exact bytes (reference value checked against RFC 3720), the bytes are stored unchanged, and data corrupted in transit is rejected with a "nothing was stored, retry" error and nothing is stored |
 | `Authentication` record | Empty record names the missing key fields; a key in the record signs as that service account, locally; `Bucket_List` requires `ProjectId` |
 | Method switch | Empty, explicit and case-insensitive `ServiceAccountKey`; invalid method; missing-field messages for both methods; the three provider formats; https-only token endpoint |
 | Federation protocol (fakes) | Client-credentials request, RFC 8693 STS exchange, impersonation, Storage called with the impersonated token, supplied `SubjectToken`, `client_secret_basic` fallback; errors for a rejected client, a non-JWT token, an STS rejection and a missing Token Creator role |
