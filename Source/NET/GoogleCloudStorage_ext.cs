@@ -784,6 +784,18 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		}
 
 		/// <summary>
+		/// Since Google.Cloud.Storage.V1 5.0, uploads send the client-computed CRC32C in an x-goog-hash
+		/// header and the server rejects a mismatch with 400, e.g. 'Provided CRC32C "..." doesn't match
+		/// calculated CRC32C "...".'
+		/// </summary>
+		private static bool IsChecksumMismatch(string details)
+		{
+			if (details == null) return false;
+			return (details.IndexOf("CRC32C", StringComparison.OrdinalIgnoreCase) >= 0 || details.IndexOf("MD5", StringComparison.OrdinalIgnoreCase) >= 0)
+				&& details.IndexOf("match", StringComparison.OrdinalIgnoreCase) >= 0;
+		}
+
+		/// <summary>
 		/// Translates a GoogleApiException into an exception with an actionable message for
 		/// OutSystems logs, instead of Google's raw API error. The original exception is kept
 		/// as InnerException.
@@ -802,6 +814,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				return new Exception("Access denied for service account '" + IdentityOf(a) + "'. Grant it the required IAM role in Google Cloud (Storage Object Admin for object operations, Storage Admin for bucket operations). Details: " + details, e);
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.Unauthorized)
 				return new Exception("Google rejected the request as unauthenticated. " + UnauthenticatedHint(a) + " Details: " + details, e);
+			if (e.HttpStatusCode == System.Net.HttpStatusCode.BadRequest && IsChecksumMismatch(details))
+				return new Exception("Upload rejected by Google Cloud Storage: the data it received did not match the CRC32C checksum computed by the connector, so nothing was stored and any existing object was left unchanged. This is usually a transient network error - retry the upload. Details: " + details, e);
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.Conflict)
 			{
 				if (details != null && details.IndexOf("not empty", StringComparison.OrdinalIgnoreCase) >= 0)

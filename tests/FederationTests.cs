@@ -32,6 +32,8 @@ public sealed class FakeFederationBackend : HttpMessageHandler
         public Uri Uri;
         public string Authorization;
         public string Body;
+        public byte[] Content;
+        public Dictionary<string, string> Headers;
 
         public Dictionary<string, string> Form
         {
@@ -60,6 +62,16 @@ public sealed class FakeFederationBackend : HttpMessageHandler
     public string StsError;
     /// <summary>Optional signBlob failure status.</summary>
     public HttpStatusCode? SignBlobFailure;
+    /// <summary>
+    /// When true, the resumable-upload endpoint flips one bit of the received data, as a transit
+    /// error would. Like the real server, it then rejects the upload if the x-goog-hash CRC32C no
+    /// longer matches.
+    /// </summary>
+    public bool CorruptUploadInTransit;
+    /// <summary>Objects stored by the fake upload endpoint, by "bucket/name".</summary>
+    public readonly Dictionary<string, byte[]> StoredObjects = new Dictionary<string, byte[]>();
+
+    private readonly Dictionary<string, string[]> _uploadSessions = new Dictionary<string, string[]>();
 
     public List<Recorded> To(string hostOrPathFragment)
     {
@@ -68,9 +80,21 @@ public sealed class FakeFederationBackend : HttpMessageHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        string body = request.Content == null ? "" : await request.Content.ReadAsStringAsync();
+        byte[] content = request.Content == null ? new byte[0] : await request.Content.ReadAsByteArrayAsync();
+        if (request.Content != null && request.Content.Headers.ContentEncoding.Contains("gzip"))
+        {
+            // Google's client gzips JSON request bodies (e.g. the upload session's metadata).
+            using (var gzip = new System.IO.Compression.GZipStream(new System.IO.MemoryStream(content), System.IO.Compression.CompressionMode.Decompress))
+            using (var plain = new System.IO.MemoryStream())
+            {
+                gzip.CopyTo(plain);
+                content = plain.ToArray();
+            }
+        }
+        string body = Encoding.UTF8.GetString(content);
         string auth = request.Headers.Authorization == null ? null : request.Headers.Authorization.ToString();
-        lock (Requests) Requests.Add(new Recorded { Method = request.Method, Uri = request.RequestUri, Authorization = auth, Body = body });
+        var headers = request.Headers.ToDictionary(h => h.Key.ToLowerInvariant(), h => string.Join(",", h.Value));
+        lock (Requests) Requests.Add(new Recorded { Method = request.Method, Uri = request.RequestUri, Authorization = auth, Body = body, Content = content, Headers = headers });
 
         string url = request.RequestUri.ToString();
 
@@ -114,6 +138,9 @@ public sealed class FakeFederationBackend : HttpMessageHandler
             return Json(HttpStatusCode.OK, new { keyId = "fake-key", signedBlob = Convert.ToBase64String(SignatureBytes) });
         }
 
+        if (url.StartsWith("https://storage.googleapis.com/upload/storage/v1/b/", StringComparison.Ordinal))
+            return ResumableUpload(request, content, headers);
+
         if (url.StartsWith("https://storage.googleapis.com/storage/v1/b/", StringComparison.Ordinal) && request.Method == HttpMethod.Get)
         {
             var bucket = request.RequestUri.AbsolutePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)[3];
@@ -121,6 +148,49 @@ public sealed class FakeFederationBackend : HttpMessageHandler
         }
 
         return Json(HttpStatusCode.NotFound, new { error = new { code = 404, message = "FakeFederationBackend has no route for " + request.Method + " " + url } });
+    }
+
+    /// <summary>
+    /// Google's resumable upload: a POST starts a session (metadata JSON, Location header back), then
+    /// a PUT carries the bytes. The client sends x-goog-hash on the final request; a mismatch gets 400
+    /// with the real service's message, and nothing is stored.
+    /// </summary>
+    private HttpResponseMessage ResumableUpload(HttpRequestMessage request, byte[] content, Dictionary<string, string> headers)
+    {
+        if (request.Method == HttpMethod.Post)
+        {
+            var bucket = request.RequestUri.AbsolutePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)[4];
+            var name = (string)Newtonsoft.Json.Linq.JObject.Parse(Encoding.UTF8.GetString(content))["name"];
+            var session = Guid.NewGuid().ToString("N");
+            lock (_uploadSessions) _uploadSessions[session] = new[] { bucket, name };
+            var started = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("") };
+            started.Headers.Location = new Uri("https://storage.googleapis.com/upload/storage/v1/b/" + bucket + "/o?uploadType=resumable&upload_id=" + session);
+            return started;
+        }
+
+        var uploadId = request.RequestUri.Query.TrimStart('?').Split('&')
+            .Where(p => p.StartsWith("upload_id=", StringComparison.Ordinal)).Select(p => Uri.UnescapeDataString(p.Substring("upload_id=".Length))).First();
+        string[] target;
+        lock (_uploadSessions) target = _uploadSessions[uploadId];
+
+        byte[] received = (byte[])content.Clone();
+        if (CorruptUploadInTransit && received.Length > 0) received[received.Length / 2] ^= 0x01;
+        string calculated = Crc32c.Base64(received);
+
+        string hash;
+        if (headers.TryGetValue("x-goog-hash", out hash))
+        {
+            var crc = hash.Split(',').Select(h => h.Trim()).FirstOrDefault(h => h.StartsWith("crc32c=", StringComparison.Ordinal));
+            string provided = crc == null ? null : crc.Substring("crc32c=".Length);
+            if (provided != null && provided != calculated)
+            {
+                var message = "Provided CRC32C \"" + provided + "\" doesn't match calculated CRC32C \"" + calculated + "\".";
+                return Json(HttpStatusCode.BadRequest, new { error = new { code = 400, message = message, errors = new[] { new { message = message, domain = "global", reason = "invalid" } } } });
+            }
+        }
+
+        lock (StoredObjects) StoredObjects[target[0] + "/" + target[1]] = received;
+        return Json(HttpStatusCode.OK, new { kind = "storage#object", bucket = target[0], name = target[1], size = received.Length.ToString(), crc32c = calculated });
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, object payload)
@@ -456,3 +526,113 @@ public static class FederationTests
     }
 }
 
+
+/// <summary>
+/// Reference CRC32C (Castagnoli, reflected polynomial 0x82F63B78), as Google Cloud Storage computes
+/// it: base64 of the big-endian 32-bit value. Independent of the SDK, so the tests check the wire value.
+/// </summary>
+public static class Crc32c
+{
+    private static readonly uint[] Table = Enumerable.Range(0, 256).Select(i =>
+    {
+        uint c = (uint)i;
+        for (int k = 0; k < 8; k++) c = (c & 1) != 0 ? 0x82F63B78u ^ (c >> 1) : c >> 1;
+        return c;
+    }).ToArray();
+
+    public static uint Compute(byte[] data)
+    {
+        uint crc = 0xFFFFFFFFu;
+        foreach (byte b in data) crc = Table[(crc ^ b) & 0xFF] ^ (crc >> 8);
+        return crc ^ 0xFFFFFFFFu;
+    }
+
+    public static string Base64(byte[] data)
+    {
+        uint v = Compute(data);
+        return Convert.ToBase64String(new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v });
+    }
+}
+
+/// <summary>
+/// Upload integrity (Google.Cloud.Storage.V1 5.0+): Object_Upload sends the CRC32C of the exact bytes
+/// in x-goog-hash, so Google rejects data corrupted in transit before storing it. Runs against the
+/// fake resumable-upload endpoint. The HTTP seam is wired into the federated client, so the uploads
+/// use WorkloadIdentityFederation with a SubjectToken. Offline.
+/// </summary>
+public static class UploadIntegrityTests
+{
+    private static RCGCS_AuthenticationRecord Federated()
+    {
+        var r = new RCGCS_AuthenticationRecord(null);
+        r.ssSTGCS_Authentication.ssProjectId = "proj";
+        r.ssSTGCS_Authentication.ssAuthenticationMethod = "WorkloadIdentityFederation";
+        r.ssSTGCS_Authentication.ssWorkloadIdentityProvider = "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/x";
+        r.ssSTGCS_Authentication.ssServiceAccountEmail = ("sa-" + Guid.NewGuid().ToString("N")).Substring(0, 20) + "@proj.iam.gserviceaccount.com";
+        r.ssSTGCS_Authentication.ssSubjectToken = "header.payload.signature";
+        return r;
+    }
+
+    private static byte[] SampleBytes(int length)
+    {
+        var data = new byte[length];
+        new Random(42).NextBytes(data);
+        return data;
+    }
+
+    private static void SetFactory(IHttpClientFactory factory)
+    {
+        typeof(CssGoogleCloudStorage_ext).GetProperty("HttpClientFactoryOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, factory, null);
+    }
+
+    private static string Chain(Exception e)
+    {
+        var parts = new List<string>();
+        for (Exception x = e; x != null; x = x.InnerException) parts.Add(x.GetType().Name + ": " + x.Message);
+        return string.Join(" | ", parts);
+    }
+
+    public static void Run()
+    {
+        string savedEmulator = Environment.GetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST");
+        Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", null);
+        try
+        {
+            // CRC-32C check value for "123456789" (RFC 3720, appendix B.4).
+            uint check = Crc32c.Compute(Encoding.ASCII.GetBytes("123456789"));
+            TestLog.Check("CRC32C reference matches the published check value (0xE3069283)", check == 0xE3069283u, "0x" + check.ToString("X8"));
+
+            // Upload sends the CRC32C of the exact bytes, and they are stored unchanged.
+            var backend = new FakeFederationBackend();
+            SetFactory(new FakeHttpClientFactory(backend));
+            var data = SampleBytes(300000);
+            Exception ex = null;
+            try { new CssGoogleCloudStorage_ext().MssObject_Upload(Federated(), "my-bucket", "docs/report.bin", data, "application/octet-stream", new RLGCS_MetadataEntryRecordList()); }
+            catch (Exception e) { ex = e; }
+            var puts = backend.To("/upload/storage/v1/b/my-bucket/o").Where(r => r.Method == HttpMethod.Put).ToList();
+            string hash = null;
+            if (puts.Count > 0) puts[puts.Count - 1].Headers.TryGetValue("x-goog-hash", out hash);
+            byte[] stored;
+            bool storedOk = backend.StoredObjects.TryGetValue("my-bucket/docs/report.bin", out stored) && stored.SequenceEqual(data);
+            TestLog.Check("Upload sends x-goog-hash with the CRC32C of the exact bytes and stores them unchanged",
+                ex == null && hash != null && hash.Contains("crc32c=" + Crc32c.Base64(data)) && storedOk,
+                ex != null ? Chain(ex) : "x-goog-hash=" + (hash ?? "(not sent)") + ", expected crc32c=" + Crc32c.Base64(data) + ", stored=" + storedOk);
+
+            // Data corrupted in transit is rejected by Google and explained; nothing is stored.
+            backend = new FakeFederationBackend();
+            backend.CorruptUploadInTransit = true;
+            SetFactory(new FakeHttpClientFactory(backend));
+            ex = null;
+            try { new CssGoogleCloudStorage_ext().MssObject_Upload(Federated(), "my-bucket", "docs/report.bin", SampleBytes(50000), "application/octet-stream", new RLGCS_MetadataEntryRecordList()); }
+            catch (Exception e) { ex = e; }
+            TestLog.Check("Data corrupted in transit is rejected with a 'nothing was stored, retry' error and nothing is stored",
+                ex != null && ex.Message.Contains("CRC32C") && ex.Message.Contains("nothing was stored") && ex.Message.Contains("retry") && backend.StoredObjects.Count == 0,
+                ex == null ? "no exception; stored objects: " + backend.StoredObjects.Count : Chain(ex) + "; stored objects: " + backend.StoredObjects.Count);
+        }
+        finally
+        {
+            SetFactory(null);
+            Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", savedEmulator);
+        }
+    }
+}

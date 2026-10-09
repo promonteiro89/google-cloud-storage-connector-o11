@@ -2,6 +2,25 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.6.1] - 2026-10-09
+
+Maintenance release: end-to-end upload integrity. No changes to actions, inputs or outputs; a drop-in replacement for 1.6.0.
+
+### Changed
+
+- `Google.Cloud.Storage.V1` 4.15.0 → 5.0.0, the minimum .NET version in Google's announcement that Cloud Storage client libraries validate upload checksums end to end by default. `Object_Upload` now sends the CRC32C checksum of the exact bytes with the upload, and Google rejects a mismatch before storing the object. Before, the check ran after the upload: a corrupted object was stored and then deleted, which could also lose the previous version when overwriting.
+- Other Google libraries: `Google.Apis` / `Google.Apis.Auth` / `Google.Apis.Core` 1.76.0 → 1.77.0, `Google.Apis.Storage.v1` 1.76.0.4250 → 1.77.0.4290, `Google.Api.Gax` / `Google.Api.Gax.Rest` 4.15.0 → 4.15.1.
+- Other bundled libraries, to their latest releases: `Microsoft.Bcl.AsyncInterfaces`, `Microsoft.Extensions.DependencyInjection.Abstractions` and `System.Diagnostics.DiagnosticSource` 10.0.6 → 10.0.12, and `Newtonsoft.Json` 13.0.3 → 13.0.4 (assembly version unchanged at 13.0.0.0). Every bundled package is now at its latest stable version.
+
+### Added
+
+- A clear error when Google rejects an upload for a checksum mismatch: it says nothing was stored, any existing object is unchanged, and the upload can be retried.
+- Upload integrity tests: the checksum sent matches an independent CRC32C of the content, and corrupted data is rejected with that error and not stored. Both checks fail against 4.15.0.
+
+### Documentation
+
+- Signed URL uploads go directly from the client to Google, so the automatic checksum applies only to `Object_Upload`; the README points to Google's data validation guide for direct uploads.
+
 ## [1.6.0] - 2026-09-28
 
 Adds keyless authentication with Workload Identity Federation next to service account keys, with one `GCS_Authentication` record per action. This release is breaking; see Migration.

@@ -1296,6 +1296,12 @@
             along with an attempt count.
             </summary>
         </member>
+        <member name="T:Google.Cloud.Storage.V1.RetryHandler.IdempotencyTokenInterceptor">
+            <summary>
+            Interceptor that automatically attaches a unique idempotency token 
+            to the x-goog-gcs-idempotency-token header.
+            </summary>
+        </member>
         <member name="T:Google.Cloud.Storage.V1.RetryOptions">
             <summary>
             Options used to indicate the retry configuration for an API request in case of failure. This class is immutable.
@@ -3441,39 +3447,6 @@
             Resource Sharing, as documented at https://cloud.google.com/storage/docs/cross-origin.
             </summary>
         </member>
-        <member name="T:Google.Cloud.Storage.V1.UploadValidationException">
-            <summary>
-            Exception thrown when an upload failed validation.
-            </summary>
-        </member>
-        <member name="P:Google.Cloud.Storage.V1.UploadValidationException.ClientSideHash">
-            <summary>
-            The hash computed locally, in base64.
-            </summary>
-        </member>
-        <member name="P:Google.Cloud.Storage.V1.UploadValidationException.UploadedObject">
-            <summary>
-            The uploaded object.
-            </summary>
-        </member>
-        <member name="P:Google.Cloud.Storage.V1.UploadValidationException.AdditionalFailures">
-            <summary>
-            A collection of additional failures following on from this one, if any. For
-            example, if the validation mode indicates that on failure the file should be deleted,
-            but the deletion fails, that exception would be present here. This property
-            is either null, or returns an <see cref="T:System.AggregateException"/> containing one or more
-            exceptions; it will never return an empty <see cref="T:System.AggregateException"/>.
-            </summary>
-        </member>
-        <member name="M:Google.Cloud.Storage.V1.UploadValidationException.#ctor(System.String,Google.Apis.Storage.v1.Data.Object,System.AggregateException)">
-            <summary>
-            Creates a new exception.
-            </summary>
-            <param name="clientSideHash">The hash of the uploaded data, as computed at the client. Must not be null.</param>
-            <param name="uploadedObject">The object created by Google Cloud Storage. Must not be null.</param>
-            <param name="additionalFailures">Any additional failures encountered while handling the error. May be null; if non-null,
-            must contain at least one exception.</param>
-        </member>
         <member name="T:Google.Cloud.Storage.V1.UploadValidationMode">
             <summary>
             Describes the validation behavior when uploading data.
@@ -3484,20 +3457,17 @@
             The upload is not validated.
             </summary>
         </member>
-        <member name="F:Google.Cloud.Storage.V1.UploadValidationMode.ThrowOnly">
-            <summary>
-            The hash of the data is computed while uploading, and
-            if the resulting object has a different hash, an <see cref="T:Google.Cloud.Storage.V1.UploadValidationException"/>
-            is thrown, but the object remains present in Storage.
-            </summary>
-        </member>
         <member name="F:Google.Cloud.Storage.V1.UploadValidationMode.DeleteAndThrow">
             <summary>
-            The hash of the data is computed while uploading, and
-            if the resulting object has a different hash, an attempt is made to delete the object.
-            Whether the deletion fails or not, an <see cref="T:Google.Cloud.Storage.V1.UploadValidationException"/>
-            is thrown. If the deletion fails, that failure can be examined via
-            <see cref="P:Google.Cloud.Storage.V1.UploadValidationException.AdditionalFailures"/>
+            Obsolete. Use <see cref="F:Google.Cloud.Storage.V1.UploadValidationMode.RejectAndThrow"/> instead.
+            Previously, the object was uploaded and then deleted if the hash mismatched. 
+            The server now rejects mismatched objects automatically before creation.
+            </summary>
+        </member>
+        <member name="F:Google.Cloud.Storage.V1.UploadValidationMode.RejectAndThrow">
+            <summary>
+            The server validates the object hash during upload. If a hash mismatch is detected, 
+            the server rejects the upload entirely, preventing the object from being created. 
             </summary>
         </member>
         <member name="T:Google.Cloud.Storage.V1.UrlSigner">
