@@ -42,17 +42,17 @@ Requirements:
 | `Object_GetMetadata` | All fields (name, bucket, size, content type, hashes, generation, timestamps); missing object gives `Exists = False` |
 | `Object_Exists` | Present and missing objects |
 | `Object_List` | Flat listing, prefix filter, delimiter folders (`PrefixList`), prefix with delimiter, pagination through `MaxResults` / `NextPageToken` |
-| `Object_Copy` / `Object_Move` / `Object_Delete` | Cross-bucket copy and move, source kept or removed |
+| `Object_Copy` / `Object_Move` / `Object_Delete` | Cross-bucket copy and move, source kept or removed; rename within a bucket; a move onto itself is refused and leaves the object and its content untouched; a missing source and a missing destination bucket fail without creating or deleting anything |
 | `Object_UpdateMetadata` | Header changes without re-upload, custom keys added, overwritten and removed, content unchanged; errors for nothing to change and for a missing object |
 | `Object_DeleteByPrefix` | Deletes a folder and its subfolders with the right count, keeps a sibling folder with the same stem and unrelated objects, zero-match count; rejects an empty or blank prefix |
 | Custom metadata | Upload with key-value metadata, read back through `CustomMetadata` |
-| `Object_GetSignedUrl` | V4 URL structure, case-insensitive operation, ContentType in the signature, expiration limits (0, over 7 days, exactly 7 days) |
+| `Object_GetSignedUrl` | V4 URL structure, case-insensitive operation, required `BucketName` / `ObjectName`, `ContentType` signed for `Upload` and ignored for `Download` / `Delete`, rejected line breaks in `ContentType`, expiration limits (0, over 7 days, exactly 7 days) |
 | Errors | Missing object and bucket, unparseable private key, negative `MaxResults` |
 | Caching | `StorageClient` and `UrlSigner` reuse, separate signers per credential, key and federation never sharing a client |
 | Upload integrity | Uploads send `x-goog-hash: crc32c=...` equal to an independent CRC32C of the exact bytes (reference value checked against RFC 3720), the bytes are stored unchanged, and data corrupted in transit is rejected with a "nothing was stored, retry" error and nothing is stored |
 | `Authentication` record | Empty record names the missing key fields; a key in the record signs as that service account, locally; `Bucket_List` requires `ProjectId` |
-| Method switch | Empty, explicit and case-insensitive `ServiceAccountKey`; invalid method; missing-field messages for both methods; the three provider formats; https-only token endpoint |
-| Federation protocol (fakes) | Client-credentials request, RFC 8693 STS exchange, impersonation, Storage called with the impersonated token, supplied `SubjectToken`, `client_secret_basic` fallback; errors for a rejected client, a non-JWT token, an STS rejection and a missing Token Creator role |
+| Method switch | Empty, explicit and case-insensitive `ServiceAccountKey`; invalid method; missing-field messages for both methods; the three provider formats; https-only token endpoint (plain http allowed only for loopback hosts, and only while the test override is set — rejected when unset); token endpoint URLs with user information (`user:password@`) rejected and not echoed |
+| Federation protocol (fakes) | Client-credentials request, RFC 8693 STS exchange, impersonation, Storage called with the impersonated token, supplied `SubjectToken`, `client_secret_basic` fallback; errors for a rejected client, a non-JWT token, an STS rejection and a missing Token Creator role; the rejected-client and non-JWT errors surface in the top-level message (the SDK's `SubjectTokenException` wrapper is unwrapped); a redirecting token endpoint is rejected instead of followed; a non-JSON error body is summarized, never echoed; a non-string `access_token` is reported as missing; a signBlob failure other than 403 reports the status code and Google's message instead of the Token Creator hint |
 | Federation live (CI) | Real Google Cloud through GitHub OIDC: Storage accepts the federated identity, and the signed URL's signature verifies against the service account's published certificates |
 
 ## The live job

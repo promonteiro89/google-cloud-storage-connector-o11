@@ -41,7 +41,7 @@ Source/NET/
 
 - Two authentication methods: Workload Identity Federation (keyless, works with any OIDC identity provider) and service account keys. See [Authentication](#authentication).
 - Every action takes the same `GCS_Authentication` record, so changing the authentication method changes the record, not the calls.
-- `StorageClient` and `UrlSigner` instances are cached per credential and reused across requests. The cache key is a SHA-256 hash, never the secret itself, and the two methods never share an entry. Identity-provider tokens are refreshed a minute before they expire.
+- `StorageClient` and `UrlSigner` instances are cached per credential and reused across requests. The cache key is a SHA-256 hash, never the secret itself, and the two methods never share an entry. Entries expire after 60 minutes without use (a supplied `SubjectToken`'s at the token's `exp`), and each cache holds at most about 500 entries. Identity-provider tokens are refreshed a minute before they expire.
 - `Object_Upload` sends the CRC32C checksum of the exact bytes with the upload, and Google rejects the upload before storing anything if the data it received doesn't match. A corrupted object is never created, and an existing object is never overwritten with bad data.
 - Signed URLs (V4, GOOG4-RSA-SHA256) are signed locally with a service account key, or through the IAM `signBlob` API with Workload Identity Federation. Large transfers then go straight between the browser and GCS.
 - Credentials are action inputs, not extension settings, so one module can serve several projects and service accounts.
@@ -95,11 +95,11 @@ Any OIDC identity provider that issues signed JWTs (RS256/ES256) works, for exam
 | `ProjectId` | Your Google Cloud project ID (used by `Bucket_List` / `Bucket_Create`) |
 | `WorkloadIdentityProvider` | `//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER` (the `https://iam.googleapis.com/...` and `projects/...` forms are also accepted) |
 | `ServiceAccountEmail` | The service account the extension acts as |
-| `TokenEndpoint` | Your identity provider's OAuth 2.0 token endpoint (https) |
+| `TokenEndpoint` | Your identity provider's OAuth 2.0 token endpoint. Must be `https://`, without a `user:password@` part. Redirects aren't followed, so use the final token URL |
 | `ClientId` / `ClientSecret` | Your app registration at the identity provider |
 | `Scope` | Optional `scope` for the token request |
 | `Audience` | Optional `audience` for the token request (some providers require it) |
-| `SubjectToken` | Optional JWT you obtained yourself. When set, `TokenEndpoint`, `ClientId` and `ClientSecret` are not needed |
+| `SubjectToken` | Optional JWT you obtained yourself. When set, `TokenEndpoint`, `ClientId` and `ClientSecret` are not needed. Each token gets its own cached credentials, which expire at the token's `exp`; an already-expired token is rejected before anything is sent to Google |
 
 Client authentication uses `client_secret_post`. If the provider rejects the client (`invalid_client`), the extension retries once with HTTP Basic (`client_secret_basic`) and keeps using whichever worked.
 
@@ -255,7 +255,7 @@ Copies an object within a bucket or to another bucket, without downloading it. O
 | `DestinationObjectName` | In | Text | Full path and name of the copy |
 
 #### `Object_Move`
-Moves an object within a bucket or to another bucket. Use the same bucket to rename. Overwrites the destination if it exists.
+Moves an object within a bucket or to another bucket. Use the same bucket with a different name to rename. Overwrites the destination if it exists. Source and destination must be different objects.
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
@@ -264,7 +264,7 @@ Moves an object within a bucket or to another bucket. Use the same bucket to ren
 | `DestinationBucketName` | In | Text | Bucket to move into (can be the source bucket) |
 | `DestinationObjectName` | In | Text | New full path and name |
 
-A move is a copy followed by a delete, so it isn't atomic. If the delete fails, the error says that both objects now exist.
+A move is a copy followed by a delete, so it isn't atomic. Both steps are guarded by the source's generation: if another writer replaces the source during the move, nothing is deleted and the error says so. If the delete fails, the error says that both objects now exist.
 
 #### `Object_GetSignedUrl`
 Creates a time-limited V4 signed URL that lets a browser or other client read, write or delete one object directly, without credentials.
@@ -273,9 +273,9 @@ Creates a time-limited V4 signed URL that lets a browser or other client read, w
 |---|---|---|---|
 | `Operation` | In | Text | Required: `Download` (GET), `Upload` (PUT) or `Delete` (DELETE), case-insensitive |
 | `BucketName` | In | Text | Bucket |
-| `ObjectName` | In | Text | Full path and name |
+| `ObjectName` | In | Text | Required: full path and name (an empty name would sign a URL for the whole bucket) |
 | `ExpirationMinutes` | In | Integer | How long the URL is valid: 1 to 10080 minutes (7 days, the V4 maximum) |
-| `ContentType` | In | Text | Optional, for `Upload`: the exact `Content-Type` the client will send. It becomes part of the signature, so an upload with a different type is rejected. Empty allows any |
+| `ContentType` | In | Text | Optional, `Upload` only: the exact `Content-Type` the client will send. It becomes part of the signature, so an upload with a different type is rejected. Empty allows any. Ignored for `Download` and `Delete` |
 | `URL` | Out | Text | The signed URL. For `Upload`, the client sends an HTTP PUT with the file as the body |
 
 A signed URL covers one object path, so request one `Upload` URL per file.

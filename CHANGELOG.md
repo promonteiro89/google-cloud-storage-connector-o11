@@ -2,6 +2,38 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.7.0] - 2026-10-28
+
+Security and reliability release. No action, input or output changes: a drop-in replacement for 1.6.1. Some invalid calls that used to fail late, or succeed with a wrong result, are now rejected up front (see Security and Fixed).
+
+### Security
+
+- Workload Identity Federation with a caller-supplied `SubjectToken`: each token now gets its own cached credentials. Before, all callers with the same provider and service account shared one cached credential ("latest token wins"), so a caller with an expired or wrong token could reuse another caller's access token for up to an hour, and a refresh could exchange another caller's token.
+- A supplied `SubjectToken` whose `exp` has passed is rejected before anything is sent to Google, and cached credentials built from a supplied token expire at the token's `exp`.
+- `TokenEndpoint` must be `https://` (plain `http://` to `localhost` was accepted before) and must not contain a `user:password@` part. The identity provider client no longer follows redirects, so the client secret is never sent to a redirect target; a redirect is reported with a clear error.
+- Identity provider error responses are no longer echoed into error messages: only the OAuth `error` / `error_description` fields are shown, and a non-JSON body is summarized by its size and content type.
+- `Object_GetSignedUrl` refuses an empty `ObjectName` (it would have signed a URL for the whole bucket) and a `ContentType` with line breaks.
+
+### Fixed
+
+- `Object_Exists` and `Object_GetMetadata` returned an error instead of `Exists = False` for a missing object in a bucket whose name contains "bucket" (e.g. `acme-bucket`): Google's "No such object: acme-bucket/..." message was mistaken for a missing bucket. Other actions reported the wrong cause for the same reason.
+- `Object_Move` onto the same object (same bucket and name) deleted the object: the copy succeeded and the following delete removed the only copy. It is now refused.
+- `Object_Move` is guarded by the source's generation: a source replaced by another writer during the move is reported instead of being deleted, a source already gone after the copy is no longer an error, and a missing destination bucket is named as such.
+- `Object_GetSignedUrl` signs the `ContentType` only for `Upload` URLs, so `Download` and `Delete` URLs no longer fail with `SignatureDoesNotMatch` when a browser sends no such header.
+- `Object_Download` of objects stored with `Content-Encoding: gzip` could fail the integrity check on valid data (Google serves them decompressed); the check is now skipped only in that case.
+- Identity provider failures (wrong `ClientSecret`, a non-JWT token) were hidden behind the SDK's generic "error occurred while attempting to obtain the subject token" message. Their actionable message is now the error's top-level message.
+- Network failures and timeouts now give a clear message instead of a raw .NET exception, and a timeout of the identity provider is no longer reported as "could not reach".
+- `Object_GetSignedUrl` with Workload Identity Federation suggests the "Service Account Token Creator" role only when Google answers 403; other failures show the status and Google's message.
+- Text outputs (`GCS_ObjectMetadata`, `GCS_Object`, `GCS_Bucket`, `Object_Download.ContentType`) are empty instead of null when Google omits a field.
+- `Bucket_Create` with an empty `Location` uses Google's default location instead of sending an empty one; `Object_Upload` accepts empty content and an empty `ContentType`.
+- `Object_UpdateMetadata` reports a concurrent metadata change (412) with a "retry the update" message.
+- `Object_DeleteByPrefix` reports the cause of a mid-run failure with the same message as the single-object actions.
+
+### Changed
+
+- Credential caches expire after 60 minutes without use and hold at most about 500 entries each, so rotated keys and per-user tokens no longer accumulate. A service account key is parsed once and shared by Storage calls and signed URLs. Cache keys length-prefix every credential part before hashing.
+- Identity provider tokens are cached until shortly before the earlier of `expires_in` and the token's own `exp`.
+
 ## [1.6.1] - 2026-10-09
 
 Maintenance release: end-to-end upload integrity. No changes to actions, inputs or outputs; a drop-in replacement for 1.6.0.
