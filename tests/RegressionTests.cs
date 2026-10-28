@@ -128,6 +128,37 @@ public static class RegressionTests
             allValid,
             "count=" + records.Length);
 
+        // H. Object_Copy 404s name the missing side (v1.7.1)
+        ext.MssObject_Upload(auth, bucket, "regr/copy-src.txt", Encoding.UTF8.GetBytes("copy me"), "text/plain", null);
+
+        Exception copyMissingBucketEx = null;
+        try
+        {
+            ext.MssObject_Copy(auth, bucket, "regr/copy-src.txt", "regr-missing-bucket-xyz", "regr/copy-dst.txt");
+        }
+        catch (Exception e)
+        {
+            copyMissingBucketEx = e;
+        }
+        TestLog.Check("Object_Copy into a missing bucket names the destination bucket",
+            copyMissingBucketEx != null && copyMissingBucketEx.Message.Contains("regr-missing-bucket-xyz") && copyMissingBucketEx.Message.Contains("Bucket"),
+            copyMissingBucketEx != null ? copyMissingBucketEx.Message : "no exception");
+
+        Exception copyMissingSourceEx = null;
+        try
+        {
+            ext.MssObject_Copy(auth, bucket, "regr/no-such-source.txt", bucket, "regr/copy-dst2.txt");
+        }
+        catch (Exception e)
+        {
+            copyMissingSourceEx = e;
+        }
+        TestLog.Check("Object_Copy of a missing source names the source object",
+            copyMissingSourceEx != null && copyMissingSourceEx.Message.Contains("regr/no-such-source.txt") && copyMissingSourceEx.Message.Contains("was not found"),
+            copyMissingSourceEx != null ? copyMissingSourceEx.Message : "no exception");
+
+        ext.MssObject_Delete(auth, bucket, "regr/copy-src.txt");
+
         // G. Clean up
         ext.MssObject_Delete(auth, bucket, "regr/null-content.bin");
         ext.MssObject_Delete(auth, bucket, "regr/no-type.txt");

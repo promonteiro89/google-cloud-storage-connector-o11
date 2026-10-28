@@ -76,6 +76,10 @@ public sealed class FakeFederationBackend : HttpMessageHandler
     public bool CorruptUploadInTransit;
     /// <summary>Objects stored by the fake upload endpoint, by "bucket/name".</summary>
     public readonly Dictionary<string, byte[]> StoredObjects = new Dictionary<string, byte[]>();
+    /// <summary>Generation the fake's object GET returns (what a caller reads).</summary>
+    public long ObjectGeneration = 1001;
+    /// <summary>Generation the stored object has now; set higher to simulate the content being replaced after the read.</summary>
+    public long CurrentGeneration = 1001;
 
     private readonly Dictionary<string, string[]> _uploadSessions = new Dictionary<string, string[]>();
 
@@ -156,6 +160,43 @@ public sealed class FakeFederationBackend : HttpMessageHandler
 
         if (url.StartsWith("https://storage.googleapis.com/upload/storage/v1/b/", StringComparison.Ordinal))
             return ResumableUpload(request, content, headers);
+
+        if (url.StartsWith("https://storage.googleapis.com/storage/v1/b/", StringComparison.Ordinal))
+        {
+            var segments = request.RequestUri.AbsolutePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length >= 6 && segments[4] == "o")
+            {
+                var bucket = segments[3];
+                var name = Uri.UnescapeDataString(segments[5]);
+                if (request.Method == HttpMethod.Get)
+                {
+                    return Json(HttpStatusCode.OK, new { kind = "storage#object", bucket = bucket, name = name, generation = ObjectGeneration.ToString(), metageneration = "1", contentType = "text/plain" });
+                }
+                if (request.Method == HttpMethod.Put)
+                {
+                    string ifGenerationMatch = null;
+                    var query = request.RequestUri.Query;
+                    if (!string.IsNullOrEmpty(query))
+                    {
+                        var pairs = query.TrimStart('?').Split(new[] { '&' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var pair in pairs)
+                        {
+                            var kv = pair.Split(new[] { '=' }, 2);
+                            if (kv[0] == "ifGenerationMatch" && kv.Length == 2)
+                            {
+                                ifGenerationMatch = kv[1];
+                                break;
+                            }
+                        }
+                    }
+                    if (ifGenerationMatch != null && ifGenerationMatch != CurrentGeneration.ToString())
+                    {
+                        return Json((HttpStatusCode)412, new { error = new { code = 412, message = "At least one of the pre-conditions you specified did not hold.", errors = new[] { new { reason = "conditionNotMet", message = "At least one of the pre-conditions you specified did not hold." } } } });
+                    }
+                    return Json(HttpStatusCode.OK, new { kind = "storage#object", bucket = bucket, name = name, generation = CurrentGeneration.ToString(), metageneration = "2", contentType = "text/csv" });
+                }
+            }
+        }
 
         if (url.StartsWith("https://storage.googleapis.com/storage/v1/b/", StringComparison.Ordinal) && request.Method == HttpMethod.Get)
         {
@@ -694,6 +735,41 @@ public static class UploadIntegrityTests
             TestLog.Check("Data corrupted in transit is rejected with a 'nothing was stored, retry' error and nothing is stored",
                 ex != null && ex.Message.Contains("CRC32C") && ex.Message.Contains("nothing was stored") && ex.Message.Contains("retry") && backend.StoredObjects.Count == 0,
                 ex == null ? "no exception; stored objects: " + backend.StoredObjects.Count : Chain(ex) + "; stored objects: " + backend.StoredObjects.Count);
+
+            backend = new FakeFederationBackend();
+            SetFactory(new FakeHttpClientFactory(backend));
+            ex = null;
+            try
+            {
+                new CssGoogleCloudStorage_ext().MssObject_UpdateMetadata(Federated(), "my-bucket", "docs/a.txt", "text/csv", "", "", "", new RLGCS_MetadataEntryRecordList());
+            }
+            catch (Exception e)
+            {
+                ex = e;
+            }
+            var putsMeta = backend.To("/storage/v1/b/my-bucket/o/").Where(r => r.Method == HttpMethod.Put).ToList();
+            var qMeta = putsMeta.Count > 0 ? putsMeta[putsMeta.Count - 1].Uri.Query : "(no PUT)";
+            TestLog.Check("UpdateMetadata keeps the generation precondition it read (ifGenerationMatch and ifMetagenerationMatch)",
+                ex == null && qMeta.Contains("ifGenerationMatch=1001") && qMeta.Contains("ifMetagenerationMatch=1"),
+                ex != null ? Chain(ex) : qMeta);
+
+            backend = new FakeFederationBackend();
+            backend.CurrentGeneration = 1002;
+            SetFactory(new FakeHttpClientFactory(backend));
+            ex = null;
+            try
+            {
+                new CssGoogleCloudStorage_ext().MssObject_UpdateMetadata(Federated(), "my-bucket", "docs/a.txt", "text/csv", "", "", "", new RLGCS_MetadataEntryRecordList());
+            }
+            catch (Exception e)
+            {
+                ex = e;
+            }
+            var putsStale = backend.To("/storage/v1/b/my-bucket/o/").Where(r => r.Method == HttpMethod.Put).ToList();
+            var qStale = putsStale.Count > 0 ? putsStale[putsStale.Count - 1].Uri.Query : "(no PUT)";
+            TestLog.Check("UpdateMetadata after the content was replaced fails with 'retry' and changes nothing",
+                ex != null && ex.Message.Contains("changed by another request") && ex.Message.Contains("Retry") && putsStale.Count == 1 && qStale.Contains("ifGenerationMatch=1001"),
+                ex == null ? "no exception; " + qStale : Chain(ex) + "; " + qStale);
         }
         finally
         {

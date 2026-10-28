@@ -69,7 +69,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 				try
 				{
-					storageClient.UpdateObject(obj, new UpdateObjectOptions { IfMetagenerationMatch = obj.Metageneration });
+					// Setting any precondition turns off the SDK's automatic ones, so both are explicit: the
+					// generation guards against a content replacement (which resets metageneration to 1).
+					storageClient.UpdateObject(obj, new UpdateObjectOptions { IfGenerationMatch = obj.Generation, IfMetagenerationMatch = obj.Metageneration });
 				}
 				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 				{
@@ -163,6 +165,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName);
 			}
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+			{
+				throw CopyNotFoundException(storageClient, e, auth, ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName);
+			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName); }
 		} // MssObject_Copy
 
@@ -204,15 +210,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 			{
-				// The source was read a moment ago. If it is still there, the missing thing is the
-				// destination bucket; otherwise the source was deleted in the meantime. Asking again
-				// avoids depending on the wording of Google's 404 message.
-				bool sourceStillExists = true;
-				try { storageClient.GetObject(ssSourceBucketName, ssSourceObjectName); }
-				catch (Google.GoogleApiException) { sourceStillExists = false; }
-				throw sourceStillExists
-					? FriendlyException(e, auth, ssDestinationBucketName, null)
-					: FriendlyException(e, auth, ssSourceBucketName, ssSourceObjectName);
+				throw CopyNotFoundException(storageClient, e, auth, ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName);
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName); }
 
@@ -237,6 +235,21 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				throw new Exception("The object was copied to '" + ssDestinationBucketName + "/" + ssDestinationObjectName + "' but the source '" + ssSourceBucketName + "/" + ssSourceObjectName + "' could not be deleted - both objects currently exist. Cause: " + TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName).Message, e);
 			}
 		} // MssObject_Move
+
+		/// <summary>
+		/// A 404 from a copy (an object rewrite) means either the source object or the destination bucket
+		/// is missing, and the message wording differs between Google and emulators. Asks again whether
+		/// the source exists and names whichever side is missing.
+		/// </summary>
+		private static Exception CopyNotFoundException(StorageClient storageClient, Google.GoogleApiException e, AuthConfig auth, string sourceBucketName, string sourceObjectName, string destinationBucketName)
+		{
+			bool sourceExists = true;
+			try { storageClient.GetObject(sourceBucketName, sourceObjectName); }
+			catch (Exception probe) when (IsTranslatable(probe)) { sourceExists = false; }
+			return sourceExists
+				? FriendlyException(e, auth, destinationBucketName, null)
+				: FriendlyException(e, auth, sourceBucketName, sourceObjectName);
+		}
 
 		/// <summary>
 		/// Retrieves the metadata of a specific object (size, content type, hashes, generation, timestamps, storage class) without downloading its content. Returns Exists = False if the object does not exist.

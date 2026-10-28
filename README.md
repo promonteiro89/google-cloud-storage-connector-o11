@@ -216,7 +216,7 @@ Reads an object's metadata (size, content type, hashes, generation, storage clas
 | `CustomMetadata` | Out | List of `GCS_MetadataEntry` | The object's custom key-value metadata; empty when there is none |
 
 #### `Object_UpdateMetadata`
-Changes an object's metadata without re-uploading its content. Only the fields you pass change, and at least one change is required. The write is guarded by a metageneration precondition, so if someone else changed the metadata in the meantime the call fails instead of overwriting their change.
+Changes an object's metadata without re-uploading its content. Only the fields you pass change, and at least one change is required. The write is guarded by the generation and metageneration it read, so if someone else changed the metadata or replaced the content in the meantime, the call fails instead of overwriting their change.
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
@@ -245,7 +245,7 @@ Permanently deletes an object.
 | `ObjectName` | In | Text | Full path and name |
 
 #### `Object_Copy`
-Copies an object within a bucket or to another bucket, without downloading it. Overwrites the destination if it exists.
+Copies an object within a bucket or to another bucket, without downloading it. Overwrites the destination if it exists. If the copy fails because something is missing, the error names the missing source object or destination bucket.
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
