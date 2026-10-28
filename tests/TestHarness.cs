@@ -70,6 +70,22 @@ public static class GcsExtensionTestSuite
     private static void OK(string name, bool cond) { TestLog.Check(name, cond, null); }
     private static string Trunc(string s, int len) { return TestLog.Trunc(s, len); }
 
+    /// <summary>Value of one query parameter of a signed URL, URL-decoded; null when absent.</summary>
+    private static string QueryParam(string url, string name)
+    {
+        if (string.IsNullOrEmpty(url)) return null;
+        int q = url.IndexOf('?');
+        if (q < 0) return null;
+        foreach (string pair in url.Substring(q + 1).Split('&'))
+        {
+            int eq = pair.IndexOf('=');
+            string key = eq < 0 ? pair : pair.Substring(0, eq);
+            if (string.Equals(Uri.UnescapeDataString(key), name, StringComparison.OrdinalIgnoreCase))
+                return eq < 0 ? "" : Uri.UnescapeDataString(pair.Substring(eq + 1));
+        }
+        return null;
+    }
+
     /// <summary>The extension's credential-based factory (it takes the internal AuthConfig).</summary>
     private static MethodInfo CredentialOverload(Type t, string name)
     {
@@ -145,6 +161,12 @@ public static class GcsExtensionTestSuite
             TestLog.Section("Federation: credential inputs, validation, protocol contract (offline fakes)");
             FederationTests.Run(email, pem);
 
+            TestLog.Section("Credential caches: supplied-token isolation, expiry, bounds (offline fakes)");
+            CacheIsolationTests.Run(email, pem);
+
+            TestLog.Section("Regressions: 404 classification and timestamp parsing (Google responses the emulator does not produce)");
+            RegressionTests.RunOffline();
+
             TestLog.Section("Upload integrity: CRC32C sent with uploads and checked by the server (offline fakes)");
             UploadIntegrityTests.Run();
 
@@ -176,6 +198,25 @@ public static class GcsExtensionTestSuite
         string urlCt;
         ext.MssObject_GetSignedUrl(Key(proj, email, pem), "Upload", "test-bucket", "docs/new.pdf", 30, "application/pdf", out urlCt);
         OK("ContentType becomes part of the signature", urlCt != null && urlCt.ToLowerInvariant().Contains("content-type"), urlCt);
+
+        // A Download URL must not sign the ContentType: the browser's GET sends no Content-Type
+        // header, so a signed one would make Google reject the request with SignatureDoesNotMatch.
+        string urlDlCt;
+        ext.MssObject_GetSignedUrl(Key(proj, email, pem), "Download", "test-bucket", "docs/report.pdf", 15, "application/pdf", out urlDlCt);
+        string dlHeaders = QueryParam(urlDlCt, "X-Goog-SignedHeaders");
+        OK("Download ignores ContentType (only 'host' is signed)", dlHeaders == "host", dlHeaders);
+
+        string upHeaders = QueryParam(urlCt, "X-Goog-SignedHeaders");
+        OK("Upload with ContentType signs content-type", upHeaders != null && upHeaders.IndexOf("content-type", StringComparison.OrdinalIgnoreCase) >= 0, upHeaders);
+
+        try { string u; ext.MssObject_GetSignedUrl(Key(proj, email, pem), "Download", "test-bucket", "", 5, "", out u); OK("Empty ObjectName rejected", false, "no exception"); }
+        catch (ArgumentException ex) { OK("Empty ObjectName rejected", ex.Message.Contains("ObjectName is required"), ex.Message); }
+
+        try { string u; ext.MssObject_GetSignedUrl(Key(proj, email, pem), "Download", "  ", "o", 5, "", out u); OK("Blank BucketName rejected", false, "no exception"); }
+        catch (ArgumentException ex) { OK("Blank BucketName rejected", ex.Message.Contains("BucketName is required"), ex.Message); }
+
+        try { string u; ext.MssObject_GetSignedUrl(Key(proj, email, pem), "Upload", "test-bucket", "o", 5, "text/plain\r\nX-Evil: 1", out u); OK("ContentType with line breaks rejected", false, "no exception"); }
+        catch (ArgumentException ex) { OK("ContentType with line breaks rejected", ex.Message.Contains("line breaks"), ex.Message); }
 
         try { string u; ext.MssObject_GetSignedUrl(Key(proj, email, pem), "Banana", "b", "o", 5, "", out u); OK("Invalid Operation rejected", false, "no exception"); }
         catch (ArgumentException) { OK("Invalid Operation rejected", true); }
@@ -401,6 +442,46 @@ public static class GcsExtensionTestSuite
         ext.MssObject_Exists(Key(proj, email, pem), b2, "moved/b.txt", out destExists);
         OK("Object_Move across buckets (source removed)", !exists && destExists);
 
+        // A move onto itself must be refused before any call: the copy would succeed and the
+        // following delete would remove the only copy of the object.
+        try
+        {
+            ext.MssObject_Move(Key(proj, email, pem), b1, "docs/a.txt", b1, "docs/a.txt");
+            OK("Object_Move onto itself is rejected", false, "no exception");
+        }
+        catch (ArgumentException ex) { OK("Object_Move onto itself is rejected", ex.Message.Contains("same object"), ex.Message); }
+        ext.MssObject_Exists(Key(proj, email, pem), b1, "docs/a.txt", out exists);
+        ext.MssObject_Download(Key(proj, email, pem), b1, "docs/a.txt", out content, out contentType);
+        OK("Object_Move onto itself leaves the object and its content untouched",
+            exists && Encoding.UTF8.GetString(content) == "content A", exists + "|" + Encoding.UTF8.GetString(content));
+
+        // Rename within one bucket (the guarded copy + delete path with matching generation).
+        ext.MssObject_Move(Key(proj, email, pem), b1, "docs/a.txt", b1, "docs/a-renamed.txt");
+        ext.MssObject_Exists(Key(proj, email, pem), b1, "docs/a.txt", out exists);
+        ext.MssObject_Exists(Key(proj, email, pem), b1, "docs/a-renamed.txt", out destExists);
+        ext.MssObject_Download(Key(proj, email, pem), b1, "docs/a-renamed.txt", out content, out contentType);
+        OK("Object_Move renames within a bucket (source removed, content equal)",
+            !exists && destExists && Encoding.UTF8.GetString(content) == "content A", exists + "|" + destExists);
+
+        try
+        {
+            ext.MssObject_Move(Key(proj, email, pem), b1, "missing/move-source.txt", b2, "missing/move-destination.txt");
+            OK("Object_Move of a missing source raises error", false, "no exception");
+        }
+        catch (Exception ex) { OK("Object_Move of a missing source raises error", ex.Message.Contains("was not found"), ex.Message); }
+        ext.MssObject_Exists(Key(proj, email, pem), b2, "missing/move-destination.txt", out destExists);
+        OK("Object_Move of a missing source creates nothing at the destination", !destExists);
+
+        string missingBucket = "test-bucket-no-such-xyz";
+        try
+        {
+            ext.MssObject_Move(Key(proj, email, pem), b1, "root.txt", missingBucket, "moved/root.txt");
+            OK("Object_Move into a missing bucket raises error", false, "no exception");
+        }
+        catch (Exception ex) { OK("Object_Move into a missing bucket raises error", ex.Message.Contains(missingBucket), ex.Message); }
+        ext.MssObject_Exists(Key(proj, email, pem), b1, "root.txt", out exists);
+        OK("Object_Move into a missing bucket keeps the source", exists);
+
         ext.MssObject_Delete(Key(proj, email, pem), b2, "moved/b.txt");
         ext.MssObject_Exists(Key(proj, email, pem), b2, "moved/b.txt", out exists);
         OK("Object_Delete removes the object", !exists);
@@ -467,6 +548,9 @@ public static class GcsExtensionTestSuite
 
         ext.MssObject_DeleteByPrefix(Key(proj, email, pem), b1, "uploads/2025/", out deletedCount);
         OK("DeleteByPrefix on empty match -> count 0", deletedCount == 0, "count=" + deletedCount);
+
+        // --- v1.7.0 regressions: empty inputs and empty-text outputs ---
+        RegressionTests.RunEmulator(ext, Key(proj, email, pem), b1);
 
         // --- cleanup via the extension's own actions ---
         foreach (string bucket in new[] { b1, b2 })

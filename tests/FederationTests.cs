@@ -58,6 +58,12 @@ public sealed class FakeFederationBackend : HttpMessageHandler
     public bool IdpRequiresBasicAuth;
     /// <summary>When true, the identity provider rejects every request with invalid_client.</summary>
     public bool IdpRejectsClient;
+    /// <summary>When true, the identity provider answers the token request with a 302 redirect.</summary>
+    public bool IdpRedirects;
+    /// <summary>When true, the identity provider answers the token request with 400 and an HTML body.</summary>
+    public bool IdpHtmlError;
+    /// <summary>When true, access_token in the token response is a JSON object instead of a string.</summary>
+    public bool IdpTokenIsObject;
     /// <summary>Optional STS failure body (returned with 400).</summary>
     public string StsError;
     /// <summary>Optional signBlob failure status.</summary>
@@ -101,9 +107,19 @@ public sealed class FakeFederationBackend : HttpMessageHandler
         if (url.StartsWith(IdpTokenEndpoint, StringComparison.Ordinal))
         {
             bool usedBasic = auth != null && auth.StartsWith("Basic ", StringComparison.Ordinal);
+            if (IdpRedirects)
+            {
+                var redirect = new HttpResponseMessage(HttpStatusCode.Found) { Content = new StringContent("", Encoding.UTF8, "text/plain") };
+                redirect.Headers.Location = new Uri("https://other.example.test/oauth2/token");
+                return redirect;
+            }
+            if (IdpHtmlError)
+                return new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("<html><body>Invalid request: SECRET-MARKER is missing</body></html>", Encoding.UTF8, "text/html") };
             if (IdpRejectsClient || (IdpRequiresBasicAuth && !usedBasic))
                 return Json(HttpStatusCode.Unauthorized, new { error = "invalid_client", error_description = "Client authentication failed." });
-            return Json(HttpStatusCode.OK, new { access_token = IdpToken, token_type = "Bearer", expires_in = 3600 });
+            return Json(HttpStatusCode.OK, IdpTokenIsObject
+                ? (object)new { access_token = new { token = IdpToken }, token_type = "Bearer", expires_in = 3600 }
+                : (object)new { access_token = IdpToken, token_type = "Bearer", expires_in = 3600 });
         }
 
         if (url.StartsWith("https://sts.googleapis.com/v1/token", StringComparison.Ordinal))
@@ -228,6 +244,11 @@ public static class FederationTests
         Sut.GetProperty("HttpClientFactoryOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, factory, null);
     }
 
+    private static IHttpClientFactory GetFactory()
+    {
+        return (IHttpClientFactory)Sut.GetProperty("HttpClientFactoryOverride", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null, null);
+    }
+
     /// <summary>Fresh fake backend per test; the extension's HTTP goes through it.</summary>
     private static CssGoogleCloudStorage_ext Fresh()
     {
@@ -305,17 +326,6 @@ public static class FederationTests
         var agg = e as AggregateException;
         if (agg != null) parts.AddRange(agg.Flatten().InnerExceptions.Select(i => i.Message));
         return string.Join(" | ", parts);
-    }
-
-    private static Exception Innermost(Exception e, string containing)
-    {
-        for (Exception x = e; x != null; x = x.InnerException)
-            if (x.Message.IndexOf(containing, StringComparison.Ordinal) >= 0) return x;
-        var agg = e as AggregateException;
-        if (agg != null)
-            foreach (var i in agg.Flatten().InnerExceptions)
-                if (i.Message.IndexOf(containing, StringComparison.Ordinal) >= 0) return i;
-        return null;
     }
 
     private static bool Has(string haystack, string needle) { return haystack != null && haystack.IndexOf(needle, StringComparison.Ordinal) >= 0; }
@@ -425,6 +435,30 @@ public static class FederationTests
         loopback.ssSTGCS_Authentication.ssTokenEndpoint = "http://localhost:8080/token";
         TestLog.Check("Plain http token endpoint is rejected unless loopback", ex is ArgumentException && Has(ex.Message, "https://") && StorageClientFor(loopback) != null, ex == null ? "no exception" : ex.Message);
 
+        // Production hardening: with the test override unset, plain http is rejected even for
+        // loopback hosts (the loopback allowance exists only to serve the fakes).
+        var prodHttp = ClientCredentials(null);
+        prodHttp.ssSTGCS_Authentication.ssTokenEndpoint = "http://localhost:8080/token";
+        var savedFactory = GetFactory();
+        try
+        {
+            SetFactory(null);
+            ex = Throws(() => StorageClientFor(prodHttp));
+        }
+        finally
+        {
+            SetFactory(savedFactory);
+        }
+        TestLog.Check("Plain http token endpoint is rejected in production (test override unset)",
+            ex is ArgumentException && Has(ex.Message, "https://"), ex == null ? "no exception" : ex.Message);
+
+        // User information in the token endpoint URL is rejected and never echoed.
+        var withUser = ClientCredentials(null);
+        withUser.ssSTGCS_Authentication.ssTokenEndpoint = "https://user:pw@idp.example.test/token";
+        ex = Throws(() => StorageClientFor(withUser));
+        TestLog.Check("TokenEndpoint with user info is rejected and the credentials are not echoed",
+            ex is ArgumentException && !Has(ex == null ? "" : ex.Message, "pw"), ex == null ? "no exception" : ex.Message);
+
         var key = StorageClientFor(KeyRecord(email, pem, ""));
         var sa = UniqueServiceAccount();
         var wif1 = StorageClientFor(ClientCredentials(sa));
@@ -439,6 +473,7 @@ public static class FederationTests
     private static void Protocol()
     {
         bool exists;
+        Exception ex;
 
         // Client credentials, end to end
         var ext = Fresh();
@@ -485,17 +520,39 @@ public static class FederationTests
         // Rejected client credentials
         ext = Fresh();
         _backend.IdpRejectsClient = true;
-        var ex = Throws(() => ext.MssBucket_Exists(ClientCredentials(null), "my-bucket", out exists));
-        var root = ex == null ? null : Innermost(ex, "rejected the client-credentials");
-        TestLog.Check("Rejected client credentials give an actionable error",
-            root != null && Has(root.Message, "invalid_client") && Has(root.Message, "ClientSecret"), ex == null ? "no exception" : AllMessages(ex));
+        ex = Throws(() => ext.MssBucket_Exists(ClientCredentials(null), "my-bucket", out exists));
+        TestLog.Check("Rejected client credentials give an actionable error at the top level",
+            ex != null && Has(ex.Message, "rejected the client-credentials token request")
+                && Has(ex.Message, "invalid_client") && Has(ex.Message, "ClientSecret"), ex == null ? "no exception" : AllMessages(ex));
 
         // Non-JWT token
         ext = Fresh();
         _backend.IdpToken = "opaque-reference-token";
         ex = Throws(() => ext.MssBucket_Exists(ClientCredentials(null), "my-bucket", out exists));
-        TestLog.Check("A non-JWT token from the provider is explained and never sent to Google",
-            ex != null && Innermost(ex, "not a JWT") != null && _backend.To("sts.googleapis.com").Count == 0, ex == null ? "no exception" : AllMessages(ex));
+        TestLog.Check("A non-JWT token from the provider is explained at the top level and never sent to Google",
+            ex != null && Has(ex.Message, "not a JWT") && _backend.To("sts.googleapis.com").Count == 0, ex == null ? "no exception" : AllMessages(ex));
+
+        // Token endpoint redirects: the identity provider client must not follow the redirect.
+        ext = Fresh();
+        _backend.IdpRedirects = true;
+        ex = Throws(() => ext.MssBucket_Exists(ClientCredentials(null), "my-bucket", out exists));
+        TestLog.Check("A redirecting token endpoint is rejected, not followed",
+            ex != null && Has(ex.Message, "redirected"), ex == null ? "no exception" : AllMessages(ex));
+
+        // Non-JSON error bodies are summarized, never echoed.
+        ext = Fresh();
+        _backend.IdpHtmlError = true;
+        ex = Throws(() => ext.MssBucket_Exists(ClientCredentials(null), "my-bucket", out exists));
+        var htmlMsg = ex == null ? "" : AllMessages(ex);
+        TestLog.Check("A non-JSON token endpoint error body is summarized, never echoed",
+            ex != null && !Has(htmlMsg, "SECRET-MARKER") && Has(htmlMsg, "non-JSON response"), ex == null ? "no exception" : htmlMsg);
+
+        // access_token that is not a JSON string is treated as missing.
+        ext = Fresh();
+        _backend.IdpTokenIsObject = true;
+        ex = Throws(() => ext.MssBucket_Exists(ClientCredentials(null), "my-bucket", out exists));
+        TestLog.Check("An access_token that is a JSON object is reported as missing 'access_token'",
+            ex != null && Has(ex.Message, "did not contain an 'access_token'"), ex == null ? "no exception" : AllMessages(ex));
 
         // STS rejection
         ext = Fresh();
@@ -523,6 +580,15 @@ public static class FederationTests
         _backend.SignBlobFailure = HttpStatusCode.Forbidden;
         var ex = Throws(() => { string u; ext.MssObject_GetSignedUrl(ClientCredentials(null), "Download", "b", "o", 15, "", out u); });
         TestLog.Check("Missing Token Creator role on signBlob is explained", ex != null && Has(AllMessages(ex), "Service Account Token Creator"), ex == null ? "no exception" : AllMessages(ex));
+
+        // Other signBlob failures report the status code and Google's message; the Token Creator
+        // hint is only right for the 403 that means the role is missing.
+        ext = Fresh();
+        _backend.SignBlobFailure = HttpStatusCode.InternalServerError;
+        ex = Throws(() => { string u; ext.MssObject_GetSignedUrl(ClientCredentials(null), "Download", "b", "o", 15, "", out u); });
+        var err500 = ex == null ? "" : AllMessages(ex);
+        TestLog.Check("A signBlob failure other than 403 reports the status, not the Token Creator hint",
+            ex != null && Has(err500, "Signing the URL failed") && Has(err500, "(500)") && !Has(err500, "Token Creator"), ex == null ? "no exception" : err500);
     }
 }
 
