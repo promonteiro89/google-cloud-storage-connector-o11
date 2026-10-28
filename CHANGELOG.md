@@ -2,6 +2,15 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.7.1] - 2026-10-28
+
+Patch release with two fixes found while porting 1.7.0 to the ODC connector. No changes to actions, inputs or outputs: a drop-in replacement for 1.7.0.
+
+### Fixed
+
+- `Object_UpdateMetadata` could write stale metadata onto new content. Setting the metageneration precondition explicitly turned off the SDK's automatic generation precondition, and replacing an object's content resets its metageneration to 1. So if another writer replaced the content between the read and the update, the update still succeeded and applied the old `ContentType` and custom metadata to the new content. The update is now guarded by both the generation and the metageneration it read, and that case fails with the existing "changed by another request, retry" error.
+- `Object_Copy` into a bucket that doesn't exist reported the source as missing ("Bucket '<source>' does not exist" or "Object '<source>' was not found"). It now checks whether the source still exists and names the missing destination bucket, the same way `Object_Move` has done since 1.7.0. Both actions share this logic.
+
 ## [1.7.0] - 2026-10-28
 
 Security and reliability release. No action, input or output changes: a drop-in replacement for 1.6.1. Some invalid calls that used to fail late, or succeed with a wrong result, are now rejected up front (see Security and Fixed).
