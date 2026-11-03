@@ -46,8 +46,8 @@ public static class LiveFederationTests
         // Google endpoints require TLS 1.2+; don't depend on the process's default protocol set.
         System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
 
-        string savedEmulator = Env("GCSCONNECTOR_EMULATOR_HOST");
-        Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", null); // real Google endpoints only
+        string savedEmulator = EmulatorSeam.Get();
+        EmulatorSeam.Set(null); // real Google endpoints only
         try
         {
             var auth = new RCGCS_AuthenticationRecord(null);
@@ -98,7 +98,7 @@ public static class LiveFederationTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", savedEmulator);
+            EmulatorSeam.Set(savedEmulator);
         }
     }
 

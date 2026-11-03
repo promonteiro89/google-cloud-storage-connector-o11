@@ -7,7 +7,8 @@
     account or credentials required:
 
       - Integration tests run against fake-gcs-server, a local Google Cloud Storage
-        emulator, via the extension-specific GCSCONNECTOR_EMULATOR_HOST environment variable.
+        emulator, through the extension's internal EmulatorBaseUri test seam (set by the harness;
+        no environment variable or server setting can turn it on).
       - Signed-URL, caching, and validation tests run fully offline (V4 signing is
         local RSA; a throwaway key is generated on first run).
 
@@ -69,7 +70,7 @@ $pem = [IO.File]::ReadAllText($pemPath)
 
 # --- fake-gcs-server ------------------------------------------------------------------
 $emulatorProc = $null
-$emulatorOn = $false
+$emulatorHost = $null
 if (-not $SkipEmulator -and $Category -ne "Live") {
     if (-not $EmulatorExe) { $EmulatorExe = $env:FAKE_GCS_EXE }
     if (-not $EmulatorExe) { $EmulatorExe = Join-Path $tools 'fake-gcs-server.exe' }
@@ -101,15 +102,12 @@ if (-not $SkipEmulator -and $Category -ne "Live") {
         } catch { Start-Sleep -Milliseconds 200 }
     }
     if (-not $ready) { throw "fake-gcs-server did not start listening on port $EmulatorPort." }
-    $emulatorOn = $true
-    # Must be set in-process BEFORE the extension creates its first StorageClient
-    [Environment]::SetEnvironmentVariable('GCSCONNECTOR_EMULATOR_HOST', "127.0.0.1:$EmulatorPort")
-} else {
-    [Environment]::SetEnvironmentVariable('GCSCONNECTOR_EMULATOR_HOST', $null)
+    # Passed to the harness, which points the extension's EmulatorBaseUri test seam at it
+    $emulatorHost = "127.0.0.1:$EmulatorPort"
 }
 
 # --- Test harness (compiled against the real extension DLL, .NET Framework 4.8) ------
-$sources = @("TestHarness.cs", "FederationTests.cs", "CacheIsolationTests.cs", "RegressionTests.cs", "LiveFederationTests.cs") | ForEach-Object { Join-Path $testsDir $_ }
+$sources = @("TestHarness.cs", "FederationTests.cs", "CacheIsolationTests.cs", "RegressionTests.cs", "SafetyTests.cs", "LiveFederationTests.cs") | ForEach-Object { Join-Path $testsDir $_ }
 $refs = @($extDll, $osrtDll) + (@("Google.Apis.dll", "Google.Apis.Core.dll", "Google.Apis.Auth.dll", "Newtonsoft.Json.dll") | ForEach-Object { Join-Path $bin $_ }) +
         @("System.dll", "System.Core.dll", "System.Net.Http.dll")
 
@@ -132,7 +130,7 @@ public static class GcsBinResolver
 
 try {
     Add-Type -Path $sources -ReferencedAssemblies $refs
-    $result = [GcsExtensionTestSuite]::Run($bin, $pem, $emulatorOn, $Category)
+    $result = [GcsExtensionTestSuite]::Run($bin, $pem, $emulatorHost, $Category)
     Write-Host $result.Log
     if ($result.Failed -gt 0) {
         Write-Host ("RESULT: {0} passed, {1} FAILED, {2} skipped" -f $result.Passed, $result.Failed, $result.Skipped) -ForegroundColor Red
@@ -143,5 +141,4 @@ try {
 }
 finally {
     if ($emulatorProc -and -not $emulatorProc.HasExited) { Stop-Process -Id $emulatorProc.Id -Force }
-    [Environment]::SetEnvironmentVariable('GCSCONNECTOR_EMULATOR_HOST', $null)
 }

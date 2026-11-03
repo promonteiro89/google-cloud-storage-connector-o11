@@ -156,6 +156,8 @@ Set these in the `GCS_Authentication` record, with `AuthenticationMethod` empty 
 
 Every action's first input is `Authentication` (a `GCS_Authentication` record, see [Authentication](#authentication)). It is listed once here rather than in each table.
 
+An empty bucket or object name is rejected with an "is required" error before anything is sent to Google.
+
 ### Object Operations
 
 #### `Object_Upload`
@@ -181,6 +183,8 @@ Downloads an object's content and content type.
 | `Content` | Out | Binary Data | File content |
 | `ContentType` | Out | Text | Stored MIME type |
 
+The download is checked against the object's stored checksum; a mismatch fails with a "did not match the object's checksum ... retry" error and returns no content. An object stored with `Content-Encoding: gzip` comes back decompressed, as its original bytes.
+
 #### `Object_List`
 Lists objects in a bucket, optionally filtered by prefix, with pagination and folder-style listing.
 
@@ -188,7 +192,7 @@ Lists objects in a bucket, optionally filtered by prefix, with pagination and fo
 |---|---|---|---|
 | `BucketName` | In | Text | Bucket to list |
 | `Prefix` | In | Text | Optional: only objects whose names start with this |
-| `MaxResults` | In | Integer | Objects per call. `0` (default) returns everything in one call; negative values are rejected |
+| `MaxResults` | In | Integer | Results per call: objects plus `PrefixList` entries together. Google returns at most 1,000 per call, so a larger value still returns up to 1,000, with `NextPageToken` set when more exist. `0` (default) returns everything in one call; negative values are rejected |
 | `PageToken` | In | Text | `NextPageToken` from the previous call; empty for the first page |
 | `Delimiter` | In | Text | Usually `/`. Objects in deeper "folders" are returned as `PrefixList` entries instead. Empty lists recursively |
 | `ObjectList` | Out | List of `GCS_Object` | The objects found |
@@ -216,7 +220,7 @@ Reads an object's metadata (size, content type, hashes, generation, storage clas
 | `CustomMetadata` | Out | List of `GCS_MetadataEntry` | The object's custom key-value metadata; empty when there is none |
 
 #### `Object_UpdateMetadata`
-Changes an object's metadata without re-uploading its content. Only the fields you pass change, and at least one change is required. The write is guarded by the generation and metageneration it read, so if someone else changed the metadata or replaced the content in the meantime, the call fails instead of overwriting their change.
+Changes an object's metadata without re-uploading its content. Only the fields you pass change, and at least one change is required; everything else, including the object's access control list, is left as it is. The write is guarded by the generation and metageneration it read, so if someone else changed the metadata or replaced the content in the meantime, the call fails instead of overwriting their change.
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
@@ -234,10 +238,12 @@ Deletes every object whose name starts with the prefix: a "folder" and everythin
 | `Prefix` | In | Text | Required and not blank, so a call can't empty the whole bucket. E.g. `uploads/2025/` |
 | `DeletedCount` | Out | Long Integer | Number of objects deleted |
 
-If a delete fails partway through, the error says how many objects were already deleted.
+Each object is deleted only if it is still the version that was listed: an object replaced after the listing is left in place and not counted. Transient Google errors are retried automatically. If a delete still fails partway through, the error says how many objects were already deleted. Deletion is permanent only on buckets without Object Versioning or soft delete; see `Object_Delete`.
 
 #### `Object_Delete`
-Permanently deletes an object.
+Deletes an object. Deleting an object that doesn't exist raises an "Object ... was not found" error.
+
+Whether the data can be recovered depends on the bucket: with Object Versioning on, the deleted object is kept as a noncurrent version, and with soft delete on (Google's default for new buckets, 7 days), it can be restored until the retention period ends. Only without both is the deletion permanent.
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
@@ -382,7 +388,6 @@ The OutSystems platform assemblies are not in the repo; they are proprietary and
 - `OutSystems.HubEdition.DatabaseAbstractionLayer.dll`
 - `OutSystems.REST.API.dll`
 - `OutSystems.SOAP.API.dll`
-- `OutSystems.SAP.API.dll`
 
 To publish:
 
@@ -396,7 +401,7 @@ To publish:
 
 The test suite in [tests/](tests/) covers every action and needs no Google account:
 
-- integration tests against the [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) emulator, through the `GCSCONNECTOR_EMULATOR_HOST` environment variable (never set on a real server);
+- integration tests against the [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) emulator, through an internal test seam that only the test harness sets (no environment variable or server setting can redirect the extension);
 - offline tests for signing, validation and caching;
 - upload integrity tests: uploads carry the CRC32C of the exact bytes, and data corrupted in transit is rejected with a clear error, against an in-process fake of Google's resumable-upload endpoint;
 - contract tests of the Workload Identity Federation protocol against an in-process fake identity provider, STS, IAM Credentials and Storage.
@@ -417,7 +422,7 @@ See [tests/README.md](tests/README.md) for details.
 - Use Workload Identity Federation where you can, so there is no long-lived Google key to leak or rotate.
 - Store `PrivateKey` and `ClientSecret` encrypted, for example as an encrypted Site Property. Don't hard-code or log them.
 - For large files, use `Object_GetSignedUrl` so the transfer goes directly between the browser and GCS instead of through the OutSystems server.
-- Bucket names must be 3 to 63 characters of lowercase letters, numbers and hyphens.
+- Bucket names are 3 to 63 characters of lowercase letters, numbers, hyphens (`-`), underscores (`_`) and dots (`.`), and must start and end with a letter or number. Names with dots can be up to 222 characters but need domain-ownership verification; Google recommends avoiding them.
 
 ---
 
