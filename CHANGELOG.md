@@ -2,6 +2,38 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.7.3] - 2026-11-03
+
+Reliability and hardening release from two independent reviews of 1.7.2 (this repository's and the ODC connector's). No action, input or output changes: a drop-in replacement for 1.7.2.
+
+### Fixed
+
+- `Object_Delete`, `Object_Download` and `Object_Upload` failed on a single transient Google error (a 503, a 429, a dropped connection), while the other actions are retried. Now:
+  - `Object_Delete` reads the object's generation first and deletes only that generation, which lets the Storage library retry it safely; this costs one extra request. If the object is replaced between the read and the delete, the new generation is read and the delete repeated, up to 3 times. A delete whose retry finds the object already gone succeeds. Deleting a missing object is still an error.
+  - `Object_Download` and `Object_Upload` repeat the whole call, up to 3 attempts, waiting about 1 and then 2 seconds, on 408, 429 and 5xx answers, network failures, broken or corrupted transfers, and (upload) a CRC32C mismatch. The Storage library has no retry setting for downloads, and doesn't retry the request that opens an upload. Timeouts are not repeated, since each one already waited 100 seconds.
+- `Object_Exists` and `Object_GetMetadata` told a missing bucket from a missing object only by Google's English error text. A 404 with other wording (an emulator, a proxy, a future change) made them return False for a missing bucket, where an error is documented. Unclear 404s are now checked by listing at most one object in the bucket.
+- A `ContentType` with a line break made `Object_Upload` fail with a raw .NET `FormatException`. It is now rejected up front with "ContentType must not contain line breaks.", as `Object_GetSignedUrl` already did.
+- `Authentication.ProjectId`, `ClientEmail` and `ServiceAccountEmail` are trimmed. A trailing space or line break, for example from a Site Property, broke sign-in or the bucket actions with an unclear error.
+- `Object_GetSignedUrl` checks `Operation` before getting credentials. With Workload Identity Federation, a typo such as "downloads" could otherwise surface as an identity provider timeout or sign-in error.
+- A download larger than about 2 GB failed with "connection interrupted ... retry", which can never succeed. It now fails at once, says the object is too large for `Object_Download`, and points to `Object_GetSignedUrl`.
+- A `TokenEndpoint` that isn't an `http(s)://` URL, such as `host/path?secret=...` or `user:password@host`, was echoed in full in the error message. Such values are no longer echoed.
+- The identity provider's `error` and `error_description` fields are cut to 100 and 300 characters and stripped of line breaks and other control characters before they reach an error message, so they can't flood or forge lines in the error log.
+- The identity provider's response is read up to 1 MB, instead of buffering whatever the endpoint sends.
+- Each credential cache holds at most 500 entries at all times. Before, the limit was applied only by the once-a-minute cleanup, so many new identities within a minute could grow it past the limit.
+
+### Documentation
+
+- `Bucket_Exists` needs the `storage.buckets.get` permission, which `Storage Object Admin` doesn't include.
+- `Object_DeleteByPrefix` lists every matching object first, then deletes them one at a time, so a very large prefix can outlast the action's timeout; run it again to continue. Its count can be one lower than the objects removed when a retried delete finds its object already gone.
+
+### CI
+
+- The build job's token is read-only (`permissions: contents: read`), and every GitHub Action is pinned to a commit SHA instead of a movable tag.
+
+### Tests
+
+- New offline tests for each change above, and two emulator tests: a gzip-encoded object downloads as its original bytes, and `Object_Exists` in a missing bucket raises the bucket error.
+
 ## [1.7.2] - 2026-11-03
 
 Reliability release from an independent review of 1.7.1. No action, input or output changes: a drop-in replacement for 1.7.1. Some invalid calls that used to reach Google are now rejected up front.

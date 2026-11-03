@@ -56,6 +56,7 @@ Source/NET/
 - A service account with the IAM roles your operations need:
   - `Storage Object Admin` for object read/write/delete
   - `Storage Admin` for bucket management (create/delete/list)
+  - `Bucket_Exists` needs `storage.buckets.get`, which `Storage Object Admin` doesn't include: use `Storage Admin`, or grant `Storage Legacy Bucket Reader` on the bucket. Without it the action raises an "Access denied" error
 - With Workload Identity Federation, the federated identity also needs `Workload Identity User` on the service account, plus `Service Account Token Creator` if you generate signed URLs. With a service account key, signed URLs are signed locally and need no extra role.
 
 ---
@@ -168,8 +169,10 @@ Uploads binary content to a bucket. Overwrites the object if it already exists.
 | `BucketName` | In | Text | Destination bucket |
 | `ObjectName` | In | Text | Full path and name in the bucket |
 | `Content` | In | Binary Data | File content |
-| `ContentType` | In | Text | MIME type, e.g. `application/pdf` |
+| `ContentType` | In | Text | MIME type, e.g. `application/pdf`. Must not contain line breaks |
 | `Metadata` | In | List of `GCS_MetadataEntry` | Optional custom key-value metadata to store with the object |
+
+A transient Google error (408, 429, 5xx, a dropped connection) repeats the whole upload, up to 3 attempts, about 1 and then 2 seconds apart. Repeating is safe because the same bytes are written again. Timeouts are not repeated.
 
 The upload carries a CRC32C checksum of `Content`. If the data Google receives doesn't match, the action fails with an "Upload rejected by Google Cloud Storage ... retry the upload" error, nothing is stored, and any existing object with that name is left unchanged.
 
@@ -184,6 +187,8 @@ Downloads an object's content and content type.
 | `ContentType` | Out | Text | Stored MIME type |
 
 The download is checked against the object's stored checksum; a mismatch fails with a "did not match the object's checksum ... retry" error and returns no content. An object stored with `Content-Encoding: gzip` comes back decompressed, as its original bytes.
+
+A transient Google error, a dropped connection or a checksum mismatch repeats the download, up to 3 attempts, about 1 and then 2 seconds apart. Timeouts are not repeated. `Content` is returned in memory, so an object larger than about 2 GB fails with an error saying so; give the client a signed URL for those (`Object_GetSignedUrl`, Operation `Download`).
 
 #### `Object_List`
 Lists objects in a bucket, optionally filtered by prefix, with pagination and folder-style listing.
@@ -207,6 +212,8 @@ Checks whether an object exists by reading its metadata (no download).
 | `BucketName` | In | Text | Bucket |
 | `ObjectName` | In | Text | Full path and name |
 | `Exists` | Out | Boolean | True if the object exists. A missing bucket raises an error instead of returning False |
+
+If Google's 404 doesn't say whether the bucket or the object is missing, the action lists at most one object in the bucket to find out (the same check is used by `Object_GetMetadata`).
 
 #### `Object_GetMetadata`
 Reads an object's metadata (size, content type, hashes, generation, storage class, timestamps) without downloading it. Returns `Exists = False`, with `Metadata` empty, if the object doesn't exist.
@@ -238,10 +245,14 @@ Deletes every object whose name starts with the prefix: a "folder" and everythin
 | `Prefix` | In | Text | Required and not blank, so a call can't empty the whole bucket. E.g. `uploads/2025/` |
 | `DeletedCount` | Out | Long Integer | Number of objects deleted |
 
-Each object is deleted only if it is still the version that was listed: an object replaced after the listing is left in place and not counted. Transient Google errors are retried automatically. If a delete still fails partway through, the error says how many objects were already deleted. Deletion is permanent only on buckets without Object Versioning or soft delete; see `Object_Delete`.
+Each object is deleted only if it is still the version that was listed: an object replaced after the listing is left in place and not counted. Transient Google errors are retried automatically. If a delete still fails partway through, the error says how many objects were already deleted.
+
+The action lists every matching object first, then deletes them one at a time. A very large prefix (tens of thousands of objects) can outlast the action's timeout; run it again to delete the rest. `DeletedCount` can be one lower than the objects actually removed when a retried delete finds its object already gone. Deletion is permanent only on buckets without Object Versioning or soft delete; see `Object_Delete`.
 
 #### `Object_Delete`
 Deletes an object. Deleting an object that doesn't exist raises an "Object ... was not found" error.
+
+The action reads the object's generation first and deletes only that generation, so transient Google errors are retried safely (one extra request per call). If another request replaces the object in between, the new generation is read and the delete repeated, up to 3 times.
 
 Whether the data can be recovered depends on the bucket: with Object Versioning on, the deleted object is kept as a noncurrent version, and with soft delete on (Google's default for new buckets, 7 days), it can be restored until the retention period ends. Only without both is the deletion permanent.
 
@@ -314,6 +325,8 @@ Checks whether a bucket exists and the service account can access it, without li
 |---|---|---|---|
 | `BucketName` | In | Text | Bucket name |
 | `Exists` | Out | Boolean | True if the bucket exists. Permission and authentication problems raise an error instead of returning False |
+
+Needs the `storage.buckets.get` permission (see [Prerequisites](#prerequisites)).
 
 #### `Bucket_Delete`
 Deletes an empty bucket.

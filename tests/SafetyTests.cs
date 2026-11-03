@@ -605,19 +605,27 @@ public static class SafetyTests
         string kept = cache.GetOrAdd("k", factory, DateTime.MaxValue);
         TestLog.Check("Cache (c): an entry unused for 59 minutes is reused", calls == 1 && kept == "v1", calls + " calls: " + kept);
 
-        // (d) the cap: the least recently used surplus goes
+        // (d) the cap holds at every insert: a full cache drops its least recently used entry for a new one
         cache = new CacheProbe();
-        for (int i = 0; i < 600; i++) cache.GetOrAdd("k" + i, k => "v", DateTime.MaxValue);
+        for (int i = 0; i < 500; i++) cache.GetOrAdd("k" + i, k => "v", DateTime.MaxValue);
         DateTime baseTime = DateTime.UtcNow.AddMinutes(-30);
-        for (int i = 0; i < 600; i++) cache.SetLastUsed("k" + i, baseTime.AddSeconds(i));
-        cache.SetNextSweep(DateTime.MinValue);
+        for (int i = 0; i < 500; i++) cache.SetLastUsed("k" + i, baseTime.AddSeconds(i));
+        TestLog.Check("Cache (d): 500 entries fit (Count 500)", cache.Count == 500, "Count=" + cache.Count);
         cache.GetOrAdd("new", k => "v", DateTime.MaxValue);
-        bool oldestGone = true, newestKept = true;
-        for (int i = 0; i < 100; i++) oldestGone &= !cache.Contains("k" + i);
-        for (int i = 100; i < 600; i++) newestKept &= cache.Contains("k" + i);
-        TestLog.Check("Cache (d): 600 entries are cut to 500, plus the new one (Count 501)", cache.Count == 501, "Count=" + cache.Count);
-        TestLog.Check("Cache (d): the 100 least recently used (k0..k99) are evicted", oldestGone);
-        TestLog.Check("Cache (d): k100..k599 and the new entry stay", newestKept && cache.Contains("new"));
+        bool restKept = true;
+        for (int i = 1; i < 500; i++) restKept &= cache.Contains("k" + i);
+        TestLog.Check("Cache (d): a 501st entry evicts the least recently used (k0); Count stays 500",
+            cache.Count == 500 && !cache.Contains("k0") && cache.Contains("new"), "Count=" + cache.Count + ", k0 present=" + cache.Contains("k0"));
+        TestLog.Check("Cache (d): k1..k499 stay", restKept);
+
+        cache = new CacheProbe();
+        int maxSeen = 0;
+        for (int i = 0; i < 1200; i++)
+        {
+            cache.GetOrAdd("burst" + i, k => "v", DateTime.MaxValue);
+            maxSeen = Math.Max(maxSeen, cache.Count);
+        }
+        TestLog.Check("Cache (d): 1,200 new identities within the same minute never hold more than 500 entries", maxSeen == 500 && cache.Count == 500, "max=" + maxSeen + ", Count=" + cache.Count);
 
         // (e) expired entries are swept even when the cache is under the cap
         cache = new CacheProbe();

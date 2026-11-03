@@ -165,6 +165,9 @@ public static class GcsExtensionTestSuite
 
     private static GcsTestResult RunCore(string pem, bool emulator, string category)
     {
+        // The retry loop's waits (1-2.5 s each) are skipped in tests; RetryTests records them instead.
+        typeof(CssGoogleCloudStorage_ext).GetProperty("RetrySleepOverride", BindingFlags.NonPublic | BindingFlags.Static)
+            .SetValue(null, (Action<TimeSpan>)delegate(TimeSpan t) { }, null);
         var ext = new CssGoogleCloudStorage_ext();
         string email = "test-sa@fake-project.iam.gserviceaccount.com";
         string proj = "fake-project";
@@ -204,6 +207,9 @@ public static class GcsExtensionTestSuite
 
             TestLog.Section("Upload integrity: CRC32C sent with uploads and checked by the server (offline fakes)");
             UploadIntegrityTests.Run();
+
+            TestLog.Section("1.7.3: retries, download cap, 404 check, identity provider limits (offline fakes)");
+            RetryTests.Run();
 
             TestLog.Section("Signed-URL verifier used by the live job (offline proof)");
             LiveFederationTests.VerifierSelfTest(email, pem);
@@ -561,6 +567,34 @@ public static class GcsExtensionTestSuite
         byte[] rt; string rtCt;
         ext.MssObject_Download(Key(proj, email, pem), b1, "meta/tagged.txt", out rt, out rtCt);
         OK("UpdateMetadata leaves content untouched", Encoding.UTF8.GetString(rt) == "tagged");
+
+        // --- 1.7.3: an object stored gzip-compressed (Content-Encoding: gzip) downloads as its original bytes ---
+        var original = Encoding.UTF8.GetBytes(string.Join(",", Enumerable.Range(0, 2000).Select(i => "row" + i).ToArray()));
+        byte[] gz;
+        using (var buffer = new System.IO.MemoryStream())
+        {
+            using (var zip = new System.IO.Compression.GZipStream(buffer, System.IO.Compression.CompressionMode.Compress, true))
+                zip.Write(original, 0, original.Length);
+            gz = buffer.ToArray();
+        }
+        ext.MssObject_Upload(Key(proj, email, pem), b1, "gz/rows.csv", gz, "text/csv", null);
+        ext.MssObject_UpdateMetadata(Key(proj, email, pem), b1, "gz/rows.csv", "", "gzip", "", "", null);
+        byte[] unzipped = null; string gzCt = null;
+        Exception gzErr = null;
+        try { ext.MssObject_Download(Key(proj, email, pem), b1, "gz/rows.csv", out unzipped, out gzCt); }
+        catch (Exception ex) { gzErr = ex; }
+        OK("Object_Download of a gzip-encoded object returns the original (decompressed) bytes with no checksum error",
+            gzErr == null && unzipped != null && unzipped.SequenceEqual(original),
+            gzErr != null ? gzErr.Message : "got " + (unzipped == null ? "null" : unzipped.Length + " bytes") + ", expected " + original.Length + " (compressed " + gz.Length + ")");
+
+        // --- 1.7.3: a missing bucket is an error for Object_Exists, whatever the emulator's 404 text ---
+        try
+        {
+            bool inMissing;
+            ext.MssObject_Exists(Key(proj, email, pem), "no-such-bucket-173", "a.txt", out inMissing);
+            OK("Object_Exists in a missing bucket raises the bucket error", false, "returned " + inMissing);
+        }
+        catch (Exception ex) { OK("Object_Exists in a missing bucket raises the bucket error", ex.Message.Contains("Bucket 'no-such-bucket-173' does not exist"), ex.Message); }
 
         try
         {
