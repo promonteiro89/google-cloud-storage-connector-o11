@@ -107,8 +107,8 @@ public static class CacheIsolationTests
 
     public static void Run(string email, string pem)
     {
-        string savedEmulator = Environment.GetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST");
-        Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", null); // real (faked) Google endpoints only
+        string savedEmulator = EmulatorSeam.Get();
+        EmulatorSeam.Set(null); // real (faked) Google endpoints only
         try
         {
             SuppliedTokenIsolation();
@@ -120,7 +120,7 @@ public static class CacheIsolationTests
         finally
         {
             SetFactory(null);
-            Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", savedEmulator);
+            EmulatorSeam.Set(savedEmulator);
         }
     }
 

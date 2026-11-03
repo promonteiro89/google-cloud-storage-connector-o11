@@ -80,6 +80,15 @@ public sealed class FakeFederationBackend : HttpMessageHandler
     public long ObjectGeneration = 1001;
     /// <summary>Generation the stored object has now; set higher to simulate the content being replaced after the read.</summary>
     public long CurrentGeneration = 1001;
+    /// <summary>Metageneration the fake's object GET returns.</summary>
+    public long ObjectMetageneration = 1;
+    /// <summary>.NET Framework 4.8 has no HttpMethod.Patch.</summary>
+    public static readonly HttpMethod Patch = new HttpMethod("PATCH");
+    /// <summary>
+    /// Optional per-test behaviour: called with every recorded request before the built-in routes; a non-null
+    /// response is returned as is, null falls through to the routes. May throw to simulate a transport failure.
+    /// </summary>
+    public Func<Recorded, HttpResponseMessage> Override;
 
     private readonly Dictionary<string, string[]> _uploadSessions = new Dictionary<string, string[]>();
 
@@ -104,7 +113,14 @@ public sealed class FakeFederationBackend : HttpMessageHandler
         string body = Encoding.UTF8.GetString(content);
         string auth = request.Headers.Authorization == null ? null : request.Headers.Authorization.ToString();
         var headers = request.Headers.ToDictionary(h => h.Key.ToLowerInvariant(), h => string.Join(",", h.Value));
-        lock (Requests) Requests.Add(new Recorded { Method = request.Method, Uri = request.RequestUri, Authorization = auth, Body = body, Content = content, Headers = headers });
+        var recorded = new Recorded { Method = request.Method, Uri = request.RequestUri, Authorization = auth, Body = body, Content = content, Headers = headers };
+        lock (Requests) Requests.Add(recorded);
+
+        if (Override != null)
+        {
+            var overridden = Override(recorded);
+            if (overridden != null) return overridden;
+        }
 
         string url = request.RequestUri.ToString();
 
@@ -170,9 +186,9 @@ public sealed class FakeFederationBackend : HttpMessageHandler
                 var name = Uri.UnescapeDataString(segments[5]);
                 if (request.Method == HttpMethod.Get)
                 {
-                    return Json(HttpStatusCode.OK, new { kind = "storage#object", bucket = bucket, name = name, generation = ObjectGeneration.ToString(), metageneration = "1", contentType = "text/plain" });
+                    return Json(HttpStatusCode.OK, new { kind = "storage#object", bucket = bucket, name = name, generation = ObjectGeneration.ToString(), metageneration = ObjectMetageneration.ToString(), contentType = "text/plain" });
                 }
-                if (request.Method == HttpMethod.Put)
+                if (request.Method == HttpMethod.Put || request.Method == Patch)
                 {
                     string ifGenerationMatch = null;
                     var query = request.RequestUri.Query;
@@ -261,7 +277,16 @@ public sealed class FakeHttpClientFactory : HttpClientFactory
 {
     private readonly FakeFederationBackend _backend;
     public FakeHttpClientFactory(FakeFederationBackend backend) { _backend = backend; }
-    protected override HttpMessageHandler CreateHandler(CreateHttpClientArgs args) { return new NonDisposingHandler(_backend); }
+    protected override HttpMessageHandler CreateHandler(CreateHttpClientArgs args)
+    {
+        HttpMessageHandler handler = new NonDisposingHandler(_backend);
+        // Google's own factory puts an (internal) StreamInterceptionHandler above the transport; the client
+        // library's download hash check (x-goog-hash) runs through it. Mirror that so downloads are checked.
+        var interception = typeof(HttpClientFactory).Assembly.GetType("Google.Apis.Http.StreamInterceptionHandler");
+        if (interception != null)
+            handler = (HttpMessageHandler)Activator.CreateInstance(interception, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new object[] { handler }, null);
+        return handler;
+    }
 
     /// <summary>ConfigurableHttpClient disposes its handler chain; keep the shared fake alive.</summary>
     private sealed class NonDisposingHandler : DelegatingHandler
@@ -280,7 +305,7 @@ public static class FederationTests
 
     // ---- plumbing --------------------------------------------------------------------------
 
-    private static void SetFactory(IHttpClientFactory factory)
+    internal static void SetFactory(IHttpClientFactory factory)
     {
         Sut.GetProperty("HttpClientFactoryOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, factory, null);
     }
@@ -306,7 +331,7 @@ public static class FederationTests
 
     private static RCGCS_AuthenticationRecord Empty() { return new RCGCS_AuthenticationRecord(null); }
 
-    private static RCGCS_AuthenticationRecord ClientCredentials(string serviceAccount)
+    internal static RCGCS_AuthenticationRecord ClientCredentials(string serviceAccount)
     {
         var r = new RCGCS_AuthenticationRecord(null);
         r.ssSTGCS_Authentication.ssProjectId = "proj";
@@ -354,13 +379,13 @@ public static class FederationTests
         return Invoke("GetStorageClient", Invoke("FromRecord", r));
     }
 
-    private static Exception Throws(Action a)
+    internal static Exception Throws(Action a)
     {
         try { a(); } catch (Exception e) { return e; }
         return null;
     }
 
-    private static string AllMessages(Exception e)
+    internal static string AllMessages(Exception e)
     {
         var parts = new List<string>();
         for (Exception x = e; x != null; x = x.InnerException) parts.Add(x.Message);
@@ -369,14 +394,14 @@ public static class FederationTests
         return string.Join(" | ", parts);
     }
 
-    private static bool Has(string haystack, string needle) { return haystack != null && haystack.IndexOf(needle, StringComparison.Ordinal) >= 0; }
+    internal static bool Has(string haystack, string needle) { return haystack != null && haystack.IndexOf(needle, StringComparison.Ordinal) >= 0; }
 
     // ---- entry point -------------------------------------------------------------------------
 
     public static void Run(string email, string pem)
     {
-        string savedEmulator = Environment.GetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST");
-        Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", null); // real (faked) Google endpoints only
+        string savedEmulator = EmulatorSeam.Get();
+        EmulatorSeam.Set(null); // real (faked) Google endpoints only
         try
         {
             CredentialInputs(email, pem);
@@ -387,7 +412,7 @@ public static class FederationTests
         finally
         {
             SetFactory(null);
-            Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", savedEmulator);
+            EmulatorSeam.Set(savedEmulator);
         }
     }
 
@@ -669,7 +694,7 @@ public static class Crc32c
 /// </summary>
 public static class UploadIntegrityTests
 {
-    private static RCGCS_AuthenticationRecord Federated()
+    internal static RCGCS_AuthenticationRecord Federated()
     {
         var r = new RCGCS_AuthenticationRecord(null);
         r.ssSTGCS_Authentication.ssProjectId = "proj";
@@ -687,12 +712,12 @@ public static class UploadIntegrityTests
         return data;
     }
 
-    private static void SetFactory(IHttpClientFactory factory)
+    internal static void SetFactory(IHttpClientFactory factory)
     {
         typeof(CssGoogleCloudStorage_ext).GetProperty("HttpClientFactoryOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, factory, null);
     }
 
-    private static string Chain(Exception e)
+    internal static string Chain(Exception e)
     {
         var parts = new List<string>();
         for (Exception x = e; x != null; x = x.InnerException) parts.Add(x.GetType().Name + ": " + x.Message);
@@ -701,8 +726,8 @@ public static class UploadIntegrityTests
 
     public static void Run()
     {
-        string savedEmulator = Environment.GetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST");
-        Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", null);
+        string savedEmulator = EmulatorSeam.Get();
+        EmulatorSeam.Set(null);
         try
         {
             // CRC-32C check value for "123456789" (RFC 3720, appendix B.4).
@@ -747,8 +772,8 @@ public static class UploadIntegrityTests
             {
                 ex = e;
             }
-            var putsMeta = backend.To("/storage/v1/b/my-bucket/o/").Where(r => r.Method == HttpMethod.Put).ToList();
-            var qMeta = putsMeta.Count > 0 ? putsMeta[putsMeta.Count - 1].Uri.Query : "(no PUT)";
+            var putsMeta = backend.To("/storage/v1/b/my-bucket/o/").Where(r => r.Method == FakeFederationBackend.Patch).ToList();
+            var qMeta = putsMeta.Count > 0 ? putsMeta[putsMeta.Count - 1].Uri.Query : "(no PATCH)";
             TestLog.Check("UpdateMetadata keeps the generation precondition it read (ifGenerationMatch and ifMetagenerationMatch)",
                 ex == null && qMeta.Contains("ifGenerationMatch=1001") && qMeta.Contains("ifMetagenerationMatch=1"),
                 ex != null ? Chain(ex) : qMeta);
@@ -765,8 +790,8 @@ public static class UploadIntegrityTests
             {
                 ex = e;
             }
-            var putsStale = backend.To("/storage/v1/b/my-bucket/o/").Where(r => r.Method == HttpMethod.Put).ToList();
-            var qStale = putsStale.Count > 0 ? putsStale[putsStale.Count - 1].Uri.Query : "(no PUT)";
+            var putsStale = backend.To("/storage/v1/b/my-bucket/o/").Where(r => r.Method == FakeFederationBackend.Patch).ToList();
+            var qStale = putsStale.Count > 0 ? putsStale[putsStale.Count - 1].Uri.Query : "(no PATCH)";
             TestLog.Check("UpdateMetadata after the content was replaced fails with 'retry' and changes nothing",
                 ex != null && ex.Message.Contains("changed by another request") && ex.Message.Contains("Retry") && putsStale.Count == 1 && qStale.Contains("ifGenerationMatch=1001"),
                 ex == null ? "no exception; " + qStale : Chain(ex) + "; " + qStale);
@@ -774,7 +799,7 @@ public static class UploadIntegrityTests
         finally
         {
             SetFactory(null);
-            Environment.SetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST", savedEmulator);
+            EmulatorSeam.Set(savedEmulator);
         }
     }
 }

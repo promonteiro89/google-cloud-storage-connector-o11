@@ -54,6 +54,29 @@ public static class TestLog
     }
 }
 
+/// <summary>
+/// The extension's internal EmulatorBaseUri test seam, which points every StorageClient at
+/// fake-gcs-server. Tests that must reach the (faked or real) Google endpoints clear it and restore it.
+/// </summary>
+public static class EmulatorSeam
+{
+    private static PropertyInfo Property
+    {
+        get { return typeof(CssGoogleCloudStorage_ext).GetProperty("EmulatorBaseUri", BindingFlags.NonPublic | BindingFlags.Static); }
+    }
+
+    public static string Get() { return (string)Property.GetValue(null, null); }
+
+    public static void Set(string baseUri) { Property.SetValue(null, baseUri, null); }
+
+    /// <summary>"127.0.0.1:4443" -> "http://127.0.0.1:4443/storage/v1/"; null or empty -> null (off).</summary>
+    public static string BaseUriForHost(string host)
+    {
+        if (string.IsNullOrEmpty(host)) return null;
+        return (host.Contains("://") ? host : "http://" + host).TrimEnd('/') + "/storage/v1/";
+    }
+}
+
 public static class GcsExtensionTestSuite
 {
     /// <summary>ServiceAccountKey credentials as the Authentication record (empty AuthenticationMethod = key).</summary>
@@ -120,7 +143,8 @@ public static class GcsExtensionTestSuite
         return d;
     }
 
-    public static GcsTestResult Run(string binPath, string pem, bool emulator, string category)
+    /// <summary>emulatorHost: fake-gcs-server's "host:port", or null/empty to skip the integration tests.</summary>
+    public static GcsTestResult Run(string binPath, string pem, string emulatorHost, string category)
     {
         AppDomain.CurrentDomain.AssemblyResolve += delegate(object s, ResolveEventArgs e)
         {
@@ -128,7 +152,15 @@ public static class GcsExtensionTestSuite
             string p = System.IO.Path.Combine(binPath, name + ".dll");
             return System.IO.File.Exists(p) ? Assembly.LoadFrom(p) : null;
         };
-        return RunCore(pem, emulator, category);
+        return RunWithEmulator(pem, emulatorHost, category);
+    }
+
+    // Separate method: the extension's types load only after the resolver above is installed.
+    private static GcsTestResult RunWithEmulator(string pem, string emulatorHost, string category)
+    {
+        EmulatorSeam.Set(EmulatorSeam.BaseUriForHost(emulatorHost));
+        try { return RunCore(pem, !string.IsNullOrEmpty(emulatorHost), category); }
+        finally { EmulatorSeam.Set(null); }
     }
 
     private static GcsTestResult RunCore(string pem, bool emulator, string category)
@@ -166,6 +198,9 @@ public static class GcsExtensionTestSuite
 
             TestLog.Section("Regressions: 404 classification and timestamp parsing (Google responses the emulator does not produce)");
             RegressionTests.RunOffline();
+
+            TestLog.Section("Safety: name guards, retries, preconditions, cache bounds (offline fakes)");
+            SafetyTests.Run(email, pem);
 
             TestLog.Section("Upload integrity: CRC32C sent with uploads and checked by the server (offline fakes)");
             UploadIntegrityTests.Run();
@@ -515,8 +550,12 @@ public static class GcsExtensionTestSuite
             md.ssSTGCS_ObjectMetadata.ssContentDisposition.Contains("tagged.json") &&
             md.ssSTGCS_ObjectMetadata.ssSize == 6,
             md.ssSTGCS_ObjectMetadata.ssContentType + "|" + md.ssSTGCS_ObjectMetadata.ssCacheControl + "|" + md.ssSTGCS_ObjectMetadata.ssSize);
+        // The connector sends the removed key as a JSON null in a PATCH (proved offline by SafetyTests). fake-gcs-server
+        // decodes that null into its string map as "" (Go's behaviour) and stores the key with an empty value instead of
+        // removing it, which real Google does. So the removed key may be absent or "" here; add and overwrite stay strict.
         OK("UpdateMetadata adds, overwrites and removes custom keys",
-            tags.Count == 2 && tags["department"] == "legal" && tags["env"] == "prod" && !tags.ContainsKey("owner"),
+            tags.Keys.Count(k => k != "owner") == 2 && tags["department"] == "legal" && tags["env"] == "prod"
+                && (!tags.ContainsKey("owner") || tags["owner"] == ""),
             string.Join(",", tags.Select(kv => kv.Key + "=" + kv.Value)));
 
         byte[] rt; string rtCt;

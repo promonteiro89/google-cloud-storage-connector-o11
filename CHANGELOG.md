@@ -2,6 +2,32 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.7.2] - 2026-11-03
+
+Reliability release from an independent review of 1.7.1. No action, input or output changes: a drop-in replacement for 1.7.1. Some invalid calls that used to reach Google are now rejected up front.
+
+### Changed
+
+- Every action rejects an empty bucket or object name before anything is sent, with "<Input> is required". `Object_Upload` and `Object_Download` used to send a request with an empty object name, and the other actions failed with an unreadable "Google Cloud Storage error (0 0): Parameter validation failed" (`Object_Move` only after reading the source).
+- `Object_UpdateMetadata` sends a PATCH with only the changed fields, instead of writing the whole object back. A full write could reset per-object access control lists on buckets that use them. The generation and metageneration preconditions are unchanged.
+- The emulator used by the integration tests is selected through an internal test seam set by the test harness. The `GCSCONNECTOR_EMULATOR_HOST` environment variable is gone, so no server setting can redirect the extension's storage traffic.
+
+### Fixed
+
+- `Object_DeleteByPrefix` and `Object_Copy` were never retried after a transient Google error: the Storage library only retries a delete with a generation precondition, and a copy with a destination precondition. `Object_DeleteByPrefix` now deletes each object only if it is still the generation it listed, which also makes the delete retryable; an object replaced after the listing is left in place and not counted. `Object_Copy` and `Object_Move`'s copy are retried explicitly (`Object_Move`'s delete already was).
+- After a copy failed with 404, a failed check of the source (for example a 403 or a timeout) was taken to mean the source was missing, so the error could name the wrong side. Only a 404 on the check means that now; any other failure names both the source object and the destination bucket.
+- Identity provider timeout and connection errors showed the full `TokenEndpoint`, including its query string. They now show the scheme, host and path only, as validation errors already did.
+- A downloaded object whose data didn't match its checksum, or a connection dropped mid-transfer, surfaced as a raw .NET `IOException`. Both now have actionable messages.
+- Some error messages ended with two periods or ran two sentences together.
+
+### Documentation
+
+- Bucket names may also contain underscores and dots.
+- `MaxResults` counts objects and `PrefixList` entries together, and Google returns at most 1,000 per call.
+- `Object_Delete` and `Object_DeleteByPrefix` are permanent only on buckets without Object Versioning or soft delete.
+- gzip-encoded objects download decompressed.
+- `OutSystems.SAP.API.dll` was listed as a required assembly, but the project doesn't reference it.
+
 ## [1.7.1] - 2026-10-28
 
 Patch release with two fixes found while porting 1.7.0 to the ODC connector. No changes to actions, inputs or outputs: a drop-in replacement for 1.7.0.

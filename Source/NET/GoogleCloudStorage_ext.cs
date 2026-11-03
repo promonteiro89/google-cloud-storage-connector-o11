@@ -35,6 +35,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssCacheControl">New cache control (e.g. &apos;public, max-age=3600&apos;). Empty = unchanged.</param>
 		/// <param name="ssMetadata">Custom metadata changes. Empty list = unchanged. An entry with empty Value removes that key; others are set/overwritten.</param>
 		public void MssObject_UpdateMetadata(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, string ssContentType, string ssContentEncoding, string ssContentDisposition, string ssCacheControl, RLGCS_MetadataEntryRecordList ssMetadata) {
+			RequireBucketName(ssBucketName, "BucketName");
+			RequireObjectName(ssObjectName, "ObjectName");
 			var changes = ToMetadataDictionary(ssMetadata);
 			bool hasFieldChange = !string.IsNullOrEmpty(ssContentType) || !string.IsNullOrEmpty(ssContentEncoding)
 				|| !string.IsNullOrEmpty(ssContentDisposition) || !string.IsNullOrEmpty(ssCacheControl);
@@ -46,32 +48,32 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			try
 			{
-				// Read-modify-write: fetch the current object, apply only the provided changes, and
-				// write it back guarded by a metageneration precondition so a concurrent metadata
-				// change fails cleanly (412) instead of being silently overwritten.
-				var obj = storageClient.GetObject(ssBucketName, ssObjectName);
+				// Read the current generation and metageneration, then PATCH only the provided fields
+				// guarded by both, so a concurrent change fails cleanly (412) instead of being silently
+				// overwritten. A PATCH leaves every other field alone, including per-object ACLs that a
+				// full PUT would replace.
+				var current = storageClient.GetObject(ssBucketName, ssObjectName);
+				var patch = new Google.Apis.Storage.v1.Data.Object { Bucket = ssBucketName, Name = ssObjectName };
 
-				if (!string.IsNullOrEmpty(ssContentType)) obj.ContentType = ssContentType;
-				if (!string.IsNullOrEmpty(ssContentEncoding)) obj.ContentEncoding = ssContentEncoding;
-				if (!string.IsNullOrEmpty(ssContentDisposition)) obj.ContentDisposition = ssContentDisposition;
-				if (!string.IsNullOrEmpty(ssCacheControl)) obj.CacheControl = ssCacheControl;
+				if (!string.IsNullOrEmpty(ssContentType)) patch.ContentType = ssContentType;
+				if (!string.IsNullOrEmpty(ssContentEncoding)) patch.ContentEncoding = ssContentEncoding;
+				if (!string.IsNullOrEmpty(ssContentDisposition)) patch.ContentDisposition = ssContentDisposition;
+				if (!string.IsNullOrEmpty(ssCacheControl)) patch.CacheControl = ssCacheControl;
 
 				if (changes != null)
 				{
-					var merged = obj.Metadata != null ? new Dictionary<string, string>(obj.Metadata) : new Dictionary<string, string>();
+					// Google merges a PATCH's metadata into the existing keys; a null value removes a key.
+					var metadata = new Dictionary<string, string>();
 					foreach (var kv in changes)
-					{
-						if (kv.Value.Length == 0) merged.Remove(kv.Key);
-						else merged[kv.Key] = kv.Value;
-					}
-					obj.Metadata = merged;
+						metadata[kv.Key] = kv.Value.Length == 0 ? null : kv.Value;
+					patch.Metadata = metadata;
 				}
 
 				try
 				{
 					// Setting any precondition turns off the SDK's automatic ones, so both are explicit: the
 					// generation guards against a content replacement (which resets metageneration to 1).
-					storageClient.UpdateObject(obj, new UpdateObjectOptions { IfGenerationMatch = obj.Generation, IfMetagenerationMatch = obj.Metageneration });
+					storageClient.PatchObject(patch, new PatchObjectOptions { IfGenerationMatch = current.Generation, IfMetagenerationMatch = current.Metageneration });
 				}
 				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 				{
@@ -92,36 +94,45 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			ssDeletedCount = 0;
 			if (string.IsNullOrWhiteSpace(ssPrefix))
 				throw new ArgumentException("Prefix cannot be empty - it would delete every object in the bucket. To do that intentionally, delete the bucket or list and delete the objects explicitly.");
+			RequireBucketName(ssBucketName, "BucketName");
 
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 
-			// Materialize the names first so deletions can't interfere with listing pagination.
-			var names = new List<string>();
+			// Materialize the names first so deletions can't interfere with listing pagination. Each
+			// object's generation is kept: deleting with it as a precondition makes the SDK retry transient
+			// errors (it never retries an unconditional delete), and leaves alone an object that was
+			// replaced after the listing.
+			var objects = new List<KeyValuePair<string, long?>>();
 			try
 			{
 				foreach (var obj in storageClient.ListObjects(ssBucketName, ssPrefix))
-					names.Add(obj.Name);
+					objects.Add(new KeyValuePair<string, long?>(obj.Name, obj.Generation));
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, null); }
 
 			long deleted = 0;
-			foreach (var name in names)
+			foreach (var item in objects)
 			{
+				string name = item.Key;
 				try
 				{
-					storageClient.DeleteObject(ssBucketName, name);
+					storageClient.DeleteObject(ssBucketName, name, new DeleteObjectOptions { IfGenerationMatch = item.Value });
 					deleted++;
 				}
 				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 				{
 					// Already gone (deleted concurrently) - the desired state is reached, keep going.
 				}
+				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+				{
+					// Replaced after the listing: newer data than what was listed, so it is left in place and not counted.
+				}
 				catch (Exception e) when (IsTranslatable(e))
 				{
 					// TranslateException gives the same message a whole-object call would give, so the
 					// partial-progress error carries an actionable cause instead of Google's raw text.
-					throw new Exception("Deleted " + deleted + " of " + names.Count + " objects under prefix '" + ssPrefix + "', then failed on '" + name + "': " + TranslateException(e, auth, ssBucketName, name).Message, e);
+					throw new Exception("Deleted " + deleted + " of " + objects.Count + " objects under prefix '" + ssPrefix + "', then failed on '" + name + "': " + TranslateException(e, auth, ssBucketName, name).Message, e);
 				}
 			}
 
@@ -135,6 +146,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssExists">True if the bucket exists and the service account can access it.</param>
 		public void MssBucket_Exists(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, out bool ssExists) {
+			RequireBucketName(ssBucketName, "BucketName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 
@@ -159,11 +171,18 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssDestinationBucketName">The bucket to copy the object into (can be the same as the source).</param>
 		/// <param name="ssDestinationObjectName">The full path/name for the destination object.</param>
 		public void MssObject_Copy(RCGCS_AuthenticationRecord ssAuthentication, string ssSourceBucketName, string ssSourceObjectName, string ssDestinationBucketName, string ssDestinationObjectName) {
+			RequireBucketName(ssSourceBucketName, "SourceBucketName");
+			RequireObjectName(ssSourceObjectName, "SourceObjectName");
+			RequireBucketName(ssDestinationBucketName, "DestinationBucketName");
+			RequireObjectName(ssDestinationObjectName, "DestinationObjectName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 			try
 			{
-				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName);
+				// The copy overwrites the destination anyway, so retrying a transient failure adds no risk;
+				// the SDK only retries a copy with a destination precondition unless told otherwise.
+				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName,
+					new CopyObjectOptions { RetryOptions = RetryOptions.IdempotentRetryOptions });
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 			{
@@ -181,6 +200,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssDestinationBucketName">The bucket to move the object into (can be the same as the source).</param>
 		/// <param name="ssDestinationObjectName">The full path/name for the destination object. Must differ from the source object name when both buckets are the same.</param>
 		public void MssObject_Move(RCGCS_AuthenticationRecord ssAuthentication, string ssSourceBucketName, string ssSourceObjectName, string ssDestinationBucketName, string ssDestinationObjectName) {
+			RequireBucketName(ssSourceBucketName, "SourceBucketName");
+			RequireObjectName(ssSourceObjectName, "SourceObjectName");
+			RequireBucketName(ssDestinationBucketName, "DestinationBucketName");
+			RequireObjectName(ssDestinationObjectName, "DestinationObjectName");
 			// Copying an object onto itself and then deleting the source would destroy the only copy.
 			if (string.Equals(ssSourceBucketName, ssDestinationBucketName, StringComparison.Ordinal)
 				&& string.Equals(ssSourceObjectName, ssDestinationObjectName, StringComparison.Ordinal))
@@ -202,7 +225,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			try
 			{
 				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName,
-					new CopyObjectOptions { IfSourceGenerationMatch = generation });
+					new CopyObjectOptions { IfSourceGenerationMatch = generation, RetryOptions = RetryOptions.IdempotentRetryOptions });
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 			{
@@ -237,18 +260,47 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		} // MssObject_Move
 
 		/// <summary>
+		/// Rejects an empty bucket name before any request. Without it the SDK fails with an unreadable
+		/// client-side "Parameter validation failed" error, after the action may already have made calls.
+		/// </summary>
+		private static void RequireBucketName(string value, string parameterName)
+		{
+			if (string.IsNullOrWhiteSpace(value))
+				throw new ArgumentException(parameterName + " is required.");
+		}
+
+		/// <summary>
+		/// Rejects an empty object name before any request: Upload and Download would otherwise send a
+		/// request for the bucket's object collection. Whitespace is a legal object name, so only empty
+		/// is rejected.
+		/// </summary>
+		private static void RequireObjectName(string value, string parameterName)
+		{
+			if (string.IsNullOrEmpty(value))
+				throw new ArgumentException(parameterName + " is required.");
+		}
+
+		/// <summary>
 		/// A 404 from a copy (an object rewrite) means either the source object or the destination bucket
 		/// is missing, and the message wording differs between Google and emulators. Asks again whether
-		/// the source exists and names whichever side is missing.
+		/// the source exists and names whichever side is missing. Only a 404 on that check means the
+		/// source is missing; any other failure (403, timeout) names both candidates instead of guessing.
 		/// </summary>
 		private static Exception CopyNotFoundException(StorageClient storageClient, Google.GoogleApiException e, AuthConfig auth, string sourceBucketName, string sourceObjectName, string destinationBucketName)
 		{
-			bool sourceExists = true;
 			try { storageClient.GetObject(sourceBucketName, sourceObjectName); }
-			catch (Exception probe) when (IsTranslatable(probe)) { sourceExists = false; }
-			return sourceExists
-				? FriendlyException(e, auth, destinationBucketName, null)
-				: FriendlyException(e, auth, sourceBucketName, sourceObjectName);
+			catch (Google.GoogleApiException probe) when (probe.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+			{
+				// The probe's own 404 says whether the source bucket or the source object is missing.
+				return FriendlyException(probe, auth, sourceBucketName, sourceObjectName);
+			}
+			catch (Exception probe) when (IsTranslatable(probe))
+			{
+				string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
+				return new Exception("The source object '" + sourceBucketName + "/" + sourceObjectName + "' or the destination bucket '" + destinationBucketName
+					+ "' does not exist, and checking which one failed: " + TranslateException(probe, auth, sourceBucketName, sourceObjectName).Message + " Details: " + details, e);
+			}
+			return FriendlyException(e, auth, destinationBucketName, null);
 		}
 
 		/// <summary>
@@ -261,6 +313,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssMetadata">The metadata of the object (size, content type, hashes, version identifiers, storage class, and timestamps), retrieved without downloading its content. Only populated when Exists is True.</param>
 		/// <param name="ssCustomMetadata">The object&apos;s custom key-value metadata. Empty when the object has none or does not exist.</param>
 		public void MssObject_GetMetadata(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, out bool ssExists, out RCGCS_ObjectMetadataRecord ssMetadata, out RLGCS_MetadataEntryRecordList ssCustomMetadata) {
+			RequireBucketName(ssBucketName, "BucketName");
+			RequireObjectName(ssObjectName, "ObjectName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 			ssExists = false;
@@ -514,6 +568,13 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// </summary>
 		internal static IHttpClientFactory HttpClientFactoryOverride { get; set; }
 
+		/// <summary>
+		/// Test seam: when set (only by the emulator integration tests), every StorageClient connects
+		/// unauthenticated to this fake-gcs-server base URI, for example "http://127.0.0.1:4443/storage/v1/".
+		/// Null in production: no environment variable or server setting can turn it on.
+		/// </summary>
+		internal static string EmulatorBaseUri { get; set; }
+
 		private enum AuthMethod { ServiceAccountKey, WorkloadIdentityFederation }
 
 		// ---- Method resolution and validation ----------------------------------------------
@@ -589,6 +650,16 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		}
 
 		/// <summary>
+		/// The token endpoint as shown in runtime errors: scheme, host and path only, never the query
+		/// or a user-information part, which may carry secrets.
+		/// </summary>
+		private static string EndpointForDisplay(string tokenEndpoint)
+		{
+			Uri uri;
+			return Uri.TryCreate(tokenEndpoint, UriKind.Absolute, out uri) ? uri.GetLeftPart(UriPartial.Path) : "(invalid URL)";
+		}
+
+		/// <summary>
 		/// Requires an absolute https:// token endpoint. Plain http is accepted only for loopback
 		/// hosts and only while the test override is set (never in production). URLs carrying user
 		/// information (https://user:password@host) are always rejected, and the error never echoes
@@ -653,18 +724,16 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		// ---- Client factories --------------------------------------------------------------
 
 		/// <summary>
-		/// Returns the cached StorageClient for the credentials. When GCSCONNECTOR_EMULATOR_HOST is set
-		/// (tests only), connects unauthenticated to that emulator instead. The name is deliberately not
-		/// Google's STORAGE_EMULATOR_HOST, so a variable set for other tools can't redirect production.
+		/// Returns the cached StorageClient for the credentials. When the EmulatorBaseUri test seam is set
+		/// (emulator tests only), connects unauthenticated to that emulator instead.
 		/// </summary>
 		private static StorageClient GetStorageClient(AuthConfig a)
 		{
 			var method = ResolveAuthMethod(a);
 
-			string emulatorHost = Environment.GetEnvironmentVariable("GCSCONNECTOR_EMULATOR_HOST");
-			if (!string.IsNullOrEmpty(emulatorHost))
+			string baseUri = EmulatorBaseUri;
+			if (!string.IsNullOrEmpty(baseUri))
 			{
-				string baseUri = (emulatorHost.Contains("://") ? emulatorHost : "http://" + emulatorHost).TrimEnd('/') + "/storage/v1/";
 				return StorageClientCache.GetOrAdd(
 					"emulator|" + baseUri,
 					_ => new StorageClientBuilder { BaseUri = baseUri, UnauthenticatedAccess = true }.Build(),
@@ -993,8 +1062,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							if (ct.IsCancellationRequested)
 								throw;
 							if (e is TaskCanceledException)
-								throw new IdentityProviderException("The identity provider token endpoint '" + _tokenEndpoint + "' did not respond within 30 seconds.", e);
-							throw new IdentityProviderException("Could not reach the identity provider token endpoint '" + _tokenEndpoint + "': " + e.Message, e);
+								throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(_tokenEndpoint) + "' did not respond within 30 seconds.", e);
+							throw new IdentityProviderException("Could not reach the identity provider token endpoint '" + EndpointForDisplay(_tokenEndpoint) + "': " + e.Message, e);
 						}
 
 						using (response)
@@ -1049,7 +1118,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							if (!basic && invalidClient && attempt == 0)
 								continue;
 
-							throw new IdentityProviderException("The identity provider rejected the client-credentials token request (" + (int)response.StatusCode + " " + (error ?? response.StatusCode.ToString()) + "): " + detail + ". Check TokenEndpoint, ClientId, ClientSecret, and Scope/Audience.");
+							throw new IdentityProviderException("The identity provider rejected the client-credentials token request (" + (int)response.StatusCode + " " + (error ?? response.StatusCode.ToString()) + "): " + EndSentence(detail) + " Check TokenEndpoint, ClientId, ClientSecret, and Scope/Audience.");
 						}
 					}
 				}
@@ -1217,7 +1286,17 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				|| e is Google.Apis.Auth.OAuth2.SubjectTokenException
 				|| e is IdentityProviderException
 				|| e is HttpRequestException
-				|| e is TaskCanceledException;
+				|| e is TaskCanceledException
+				|| e is IOException;
+		}
+
+		/// <summary>Ends a message fragment with a period unless it already ends a sentence.</summary>
+		private static string EndSentence(string text)
+		{
+			string t = (text ?? string.Empty).TrimEnd();
+			if (t.Length == 0) return t;
+			char last = t[t.Length - 1];
+			return last == '.' || last == '!' || last == '?' ? t : t + ".";
 		}
 
 		/// <summary>
@@ -1249,7 +1328,16 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				return new Exception(e.Message, e);
 
 			if (e is HttpRequestException)
-				return new Exception("Could not reach Google Cloud: " + InnermostMessage(e) + " Check the server's outbound HTTPS access to *.googleapis.com.", e);
+				return new Exception("Could not reach Google Cloud: " + EndSentence(InnermostMessage(e)) + " Check the server's outbound HTTPS access to *.googleapis.com.", e);
+
+			// The Storage library reports a downloaded hash mismatch as a plain IOException.
+			var io = e as IOException;
+			if (io != null)
+			{
+				if (io.Message.StartsWith("Incorrect hash", StringComparison.Ordinal))
+					return new Exception("The downloaded data did not match the object's checksum, so no content was returned. This is usually a transient network error - retry the download. Details: " + io.Message, e);
+				return new Exception("The connection to Google Cloud was interrupted: " + EndSentence(InnermostMessage(e)) + " Retry the request.", e);
+			}
 
 			// TaskCanceledException without caller cancellation: the request timed out.
 			return new Exception("The request to Google Cloud timed out.", e);
@@ -1301,6 +1389,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					return new Exception("Bucket '" + bucketName + "' is not empty. Delete all objects in it before deleting the bucket. Details: " + details, e);
 				return new Exception("Conflict: " + details + " (for Bucket_Create this usually means the name is already taken - bucket names are global across all of Google Cloud Storage).", e);
 			}
+			// Status 0: the SDK rejected the request itself (for example "Parameter validation failed"), so nothing reached Google.
+			if ((int)e.HttpStatusCode == 0)
+				return new Exception("The request was rejected by the Google Cloud Storage client library before it was sent: " + details, e);
 			return new Exception("Google Cloud Storage error (" + (int)e.HttpStatusCode + " " + e.HttpStatusCode + "): " + details, e);
 		}
 
@@ -1347,6 +1438,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssLocation"></param>
 		public void MssBucket_Create(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssLocation)
 		{
+			RequireBucketName(ssBucketName, "BucketName");
 			var auth = FromRecord(ssAuthentication);
 			RequireProjectId(auth, "Bucket_Create");
 			var storageClient = GetStorageClient(auth);
@@ -1372,6 +1464,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssBucketName"></param>
 		public void MssBucket_Delete(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName)
 		{
+			RequireBucketName(ssBucketName, "BucketName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 			try
@@ -1389,6 +1482,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssObjectName"></param>
 		public void MssObject_Delete(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName)
 		{
+			RequireBucketName(ssBucketName, "BucketName");
+			RequireObjectName(ssObjectName, "ObjectName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 			try
@@ -1407,6 +1502,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssExists"></param>
 		public void MssObject_Exists(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, out bool ssExists)
 		{
+			RequireBucketName(ssBucketName, "BucketName");
+			RequireObjectName(ssObjectName, "ObjectName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 
@@ -1436,8 +1533,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		{
 			// Validate before signing: UrlSigner signs a bucket-level URL when ObjectName is empty, which
 			// would grant access to every object in the bucket instead of one.
-			if (string.IsNullOrWhiteSpace(ssBucketName))
-				throw new ArgumentException("BucketName is required.");
+			RequireBucketName(ssBucketName, "BucketName");
 			if (string.IsNullOrEmpty(ssObjectName))
 				throw new ArgumentException("ObjectName is required; a signed URL without an object name would grant access to the bucket itself.");
 			if (!string.IsNullOrEmpty(ssContentType) && (ssContentType.IndexOf('\r') >= 0 || ssContentType.IndexOf('\n') >= 0))
@@ -1504,6 +1600,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssMetadata">Optional custom key-value metadata to store with the object. Retrievable via Object_GetMetadata.</param>
 		public void MssObject_Upload(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, byte[] ssContent, string ssContentType, RLGCS_MetadataEntryRecordList ssMetadata)
 		{
+			RequireBucketName(ssBucketName, "BucketName");
+			RequireObjectName(ssObjectName, "ObjectName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 
@@ -1535,6 +1633,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssContentType"></param>
 		public void MssObject_Download(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, out byte[] ssContent, out string ssContentType)
 		{
+			RequireBucketName(ssBucketName, "BucketName");
+			RequireObjectName(ssObjectName, "ObjectName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 
@@ -1566,6 +1666,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <param name="ssPrefixList">The "folders" directly under Prefix when Delimiter is set.</param>
 		public void MssObject_List(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssPrefix, int ssMaxResults, string ssPageToken, string ssDelimiter, out RLGCS_ObjectRecordList ssObjectList, out string ssNextPageToken, out RLGCS_PrefixRecordList ssPrefixList)
 		{
+			RequireBucketName(ssBucketName, "BucketName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 			ssObjectList = new RLGCS_ObjectRecordList();
