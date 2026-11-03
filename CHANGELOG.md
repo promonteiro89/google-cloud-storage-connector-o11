@@ -10,6 +10,7 @@ Reliability release from an independent review of 1.7.1. No action, input or out
 
 - Every action rejects an empty bucket or object name before anything is sent, with "<Input> is required". `Object_Upload` and `Object_Download` used to send a request with an empty object name, and the other actions failed with an unreadable "Google Cloud Storage error (0 0): Parameter validation failed" (`Object_Move` only after reading the source).
 - `Object_UpdateMetadata` sends a PATCH with only the changed fields, instead of writing the whole object back. A full write could reset per-object access control lists on buckets that use them. The generation and metageneration preconditions are unchanged.
+- The bundled Google libraries are updated: `Google.Api.Gax` and `Google.Api.Gax.Rest` 4.15.1 to 4.15.2, `Google.Apis`, `Google.Apis.Auth` and `Google.Apis.Core` 1.77.0 to 1.78.0, and `Google.Apis.Storage.v1` 1.77.0.4290 to 1.77.0.4299. `Google.Cloud.Storage.V1` stays at 5.0.0.
 - The emulator used by the integration tests is selected through an internal test seam set by the test harness. The `GCSCONNECTOR_EMULATOR_HOST` environment variable is gone, so no server setting can redirect the extension's storage traffic.
 
 ### Fixed

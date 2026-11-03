@@ -92,7 +92,7 @@
         <member name="T:Google.Apis.Http.BackOffHandler">
             <summary>
             A thread-safe back-off handler which handles an abnormal HTTP response or an exception with 
-            <see cref="T:Google.Apis.Util.IBackOff"/>.
+            <see cref="T:Google.Apis.Util.IBackOff"/> or the HTTP <c>Retry-After</c> header.
             </summary>
         </member>
         <member name="T:Google.Apis.Http.BackOffHandler.Initializer">
@@ -104,8 +104,9 @@
         <member name="P:Google.Apis.Http.BackOffHandler.Initializer.MaxTimeSpan">
             <summary>
             Gets or sets the maximum time span to wait. If the back-off instance returns a greater time span than
-            this value, this handler returns <c>false</c> to both <c>HandleExceptionAsync</c> and 
-            <c>HandleResponseAsync</c>. Default value is 16 seconds per a retry request.
+            this value, or if the Retry-After header indicates a delay greater than this value, this handler returns
+            <c>false</c> to both <c>HandleExceptionAsync</c> and <c>HandleResponseAsync</c>. Default value is 16 seconds
+            per a retry request.
             </summary>
         </member>
         <member name="P:Google.Apis.Http.BackOffHandler.Initializer.HandleUnsuccessfulResponseFunc">
@@ -118,6 +119,17 @@
             <summary>
             Gets or sets a delegate function which indicates whether this back-off handler should handle an 
             exception. The default is <see cref="F:Google.Apis.Http.BackOffHandler.Initializer.DefaultHandleExceptionFunc"/>. 
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Http.BackOffHandler.Initializer.Clock">
+            <summary>
+            Gets or sets the clock used by this back-off handler. If unset, <see cref="F:Google.Apis.Util.SystemClock.Default"/> will be used.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Http.BackOffHandler.Initializer.RespectRetryAfterHeader">
+            <summary>
+            Gets or sets whether the handler should inspect and respect the HTTP <c>Retry-After</c> header
+            on abnormal responses. Default value is <c>false</c>.
             </summary>
         </member>
         <member name="F:Google.Apis.Http.BackOffHandler.Initializer.DefaultHandleUnsuccessfulResponseFunc">
@@ -139,8 +151,9 @@
         </member>
         <member name="P:Google.Apis.Http.BackOffHandler.MaxTimeSpan">
             <summary>
-            Gets the maximum time span to wait. If the back-off instance returns a greater time span, the handle method
-            returns <c>false</c>. Default value is 16 seconds per a retry request.
+            Gets the maximum time span to wait. If the back-off instance returns a greater time span than this value,
+            or if the Retry-After header indicates a delay greater than this value, the handle method returns <c>false</c>.
+            Default value is 16 seconds per a retry request.
             </summary>
         </member>
         <member name="P:Google.Apis.Http.BackOffHandler.HandleUnsuccessfulResponseFunc">
@@ -153,6 +166,16 @@
             <summary>
             Gets a delegate function which indicates whether this back-off handler should handle an exception. The 
             default is <see cref="F:Google.Apis.Http.BackOffHandler.Initializer.DefaultHandleExceptionFunc"/>. 
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Http.BackOffHandler.RespectRetryAfterHeader">
+            <summary>
+            Gets whether the handler should inspect and respect the HTTP <c>Retry-After</c> header on abnormal responses.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Http.BackOffHandler.RetryAfterBackOff">
+            <summary>
+            Gets the strategy used to extract Retry-After delays.
             </summary>
         </member>
         <member name="M:Google.Apis.Http.BackOffHandler.#ctor(Google.Apis.Util.IBackOff)">
@@ -168,12 +191,12 @@
         <member name="M:Google.Apis.Http.BackOffHandler.HandleExceptionAsync(Google.Apis.Http.HandleExceptionArgs)">
             <inheritdoc/>
         </member>
-        <member name="M:Google.Apis.Http.BackOffHandler.HandleAsync(System.Boolean,System.Int32,System.Threading.CancellationToken)">
+        <member name="M:Google.Apis.Http.BackOffHandler.HandleAsync(System.Boolean,System.Int32,System.Net.Http.HttpResponseMessage,System.Threading.CancellationToken)">
             <summary>
             Handles back-off. In case the request doesn't support retry or the back-off time span is greater than the
             maximum time span allowed for a request, the handler returns <c>false</c>. Otherwise the current thread 
-            will block for x milliseconds (x is defined by the <see cref="P:Google.Apis.Http.BackOffHandler.BackOff"/> instance), and this handler 
-            returns <c>true</c>.
+            will block for x milliseconds (x is defined by the Retry-After header or the <see cref="P:Google.Apis.Http.BackOffHandler.BackOff"/> instance), 
+            and this handler returns <c>true</c>.
             </summary>
         </member>
         <member name="M:Google.Apis.Http.BackOffHandler.Wait(System.TimeSpan,System.Threading.CancellationToken)">
@@ -847,6 +870,17 @@
             delegating onwards.
             </summary>
         </member>
+        <member name="T:Google.Apis.Http.IRetryAfterBackOff">
+            <summary>
+            Strategy interface to extract and calculate a retry delay from an HTTP response.
+            </summary>
+        </member>
+        <member name="M:Google.Apis.Http.IRetryAfterBackOff.GetRetryAfterDelay(System.Net.Http.HttpResponseMessage)">
+            <summary>
+            Gets the retry delay indicated by the HTTP response, if present and valid.
+            Returns <c>null</c> if no valid retry hint is present or parsing fails.
+            </summary>
+        </member>
         <member name="T:Google.Apis.Http.MaxUrlLengthInterceptor">
             <summary>
             Intercepts HTTP GET requests with a URLs longer than a specified maximum number of characters.
@@ -863,6 +897,25 @@
             <summary>Constructs a new Max URL length interceptor with the given max length.</summary>
         </member>
         <member name="M:Google.Apis.Http.MaxUrlLengthInterceptor.InterceptAsync(System.Net.Http.HttpRequestMessage,System.Threading.CancellationToken)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Google.Apis.Http.RetryAfterBackOff">
+            <summary>
+            Default implementation of <see cref="T:Google.Apis.Http.IRetryAfterBackOff"/> that parses standard HTTP <c>Retry-After</c> headers.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Http.RetryAfterBackOff.Clock">
+            <summary>
+            Gets the clock used to calculate delays for date-based Retry-After headers.
+            </summary>
+        </member>
+        <member name="M:Google.Apis.Http.RetryAfterBackOff.#ctor(Google.Apis.Util.IClock)">
+            <summary>
+            Constructs a new <see cref="T:Google.Apis.Http.RetryAfterBackOff"/> instance.
+            </summary>
+            <param name="clock">The clock used for calculating date-based delays.</param>
+        </member>
+        <member name="M:Google.Apis.Http.RetryAfterBackOff.GetRetryAfterDelay(System.Net.Http.HttpResponseMessage)">
             <inheritdoc/>
         </member>
         <member name="T:Google.Apis.Http.StreamInterceptionHandler">
