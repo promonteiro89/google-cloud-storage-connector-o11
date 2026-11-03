@@ -71,6 +71,12 @@
             this is to allow for possible local-client clock skew. Defaults to zero seconds.
             </summary>
         </member>
+        <member name="P:Google.Apis.Auth.GoogleJsonWebSignature.ValidationSettings.HttpClientFactory">
+            <summary>
+            The <see cref="T:Google.Apis.Http.IHttpClientFactory"/> to use when fetching certificates for signature verification.
+            May be null, in which case a default HTTP client will be used.
+            </summary>
+        </member>
         <member name="P:Google.Apis.Auth.GoogleJsonWebSignature.ValidationSettings.CertificateCache">
             <summary>
             CertificateCache for testing purposes.
@@ -5023,6 +5029,12 @@
             List of trusted issuers to verify the token issuer against.
             The token issuer must be contained in this list.
             May be null, in which case the token issuer won't be verified.
+            </summary>
+        </member>
+        <member name="P:Google.Apis.Auth.SignedTokenVerificationOptions.HttpClientFactory">
+            <summary>
+            The <see cref="T:Google.Apis.Http.IHttpClientFactory"/> to use when fetching certificates for signature verification.
+            May be null, in which case a default HTTP client will be used.
             </summary>
         </member>
         <member name="P:Google.Apis.Auth.SignedTokenVerificationOptions.ForceCertificateRefresh">

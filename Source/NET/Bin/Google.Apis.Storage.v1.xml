@@ -83,9 +83,6 @@
         <member name="P:Google.Apis.Storage.v1.StorageService.Buckets">
             <summary>Gets the Buckets resource.</summary>
         </member>
-        <member name="P:Google.Apis.Storage.v1.StorageService.Channels">
-            <summary>Gets the Channels resource.</summary>
-        </member>
         <member name="P:Google.Apis.Storage.v1.StorageService.DefaultObjectAccessControls">
             <summary>Gets the DefaultObjectAccessControls resource.</summary>
         </member>
@@ -1385,43 +1382,6 @@
         </member>
         <member name="M:Google.Apis.Storage.v1.BucketsResource.UpdateRequest.InitParameters">
             <summary>Initializes Update parameter list.</summary>
-        </member>
-        <member name="T:Google.Apis.Storage.v1.ChannelsResource">
-            <summary>The "channels" collection of methods.</summary>
-        </member>
-        <member name="F:Google.Apis.Storage.v1.ChannelsResource.service">
-            <summary>The service which this resource belongs to.</summary>
-        </member>
-        <member name="M:Google.Apis.Storage.v1.ChannelsResource.#ctor(Google.Apis.Services.IClientService)">
-            <summary>Constructs a new resource.</summary>
-        </member>
-        <member name="M:Google.Apis.Storage.v1.ChannelsResource.Stop(Google.Apis.Storage.v1.Data.Channel)">
-            <summary>Stop watching resources through this channel</summary>
-            <param name="body">The body of the request.</param>
-        </member>
-        <member name="T:Google.Apis.Storage.v1.ChannelsResource.StopRequest">
-            <summary>Stop watching resources through this channel</summary>
-        </member>
-        <member name="M:Google.Apis.Storage.v1.ChannelsResource.StopRequest.#ctor(Google.Apis.Services.IClientService,Google.Apis.Storage.v1.Data.Channel)">
-            <summary>Constructs a new Stop request.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ChannelsResource.StopRequest.Body">
-            <summary>Gets or sets the body of this request.</summary>
-        </member>
-        <member name="M:Google.Apis.Storage.v1.ChannelsResource.StopRequest.GetBody">
-            <summary>Returns the body of the request.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ChannelsResource.StopRequest.MethodName">
-            <summary>Gets the method name.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ChannelsResource.StopRequest.HttpMethod">
-            <summary>Gets the HTTP method.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.ChannelsResource.StopRequest.RestPath">
-            <summary>Gets the REST path.</summary>
-        </member>
-        <member name="M:Google.Apis.Storage.v1.ChannelsResource.StopRequest.InitParameters">
-            <summary>Initializes Stop parameter list.</summary>
         </member>
         <member name="T:Google.Apis.Storage.v1.DefaultObjectAccessControlsResource">
             <summary>The "defaultObjectAccessControls" collection of methods.</summary>
@@ -6188,52 +6148,6 @@
             </summary>
         </member>
         <member name="P:Google.Apis.Storage.v1.Data.BulkRestoreObjectsRequest.ETag">
-            <summary>The ETag of the item.</summary>
-        </member>
-        <member name="T:Google.Apis.Storage.v1.Data.Channel">
-            <summary>An notification channel used to watch for resource changes.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.Address">
-            <summary>The address where notifications are delivered for this channel.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.Expiration">
-            <summary>
-            Date and time of notification channel expiration, expressed as a Unix timestamp, in milliseconds. Optional.
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.Id">
-            <summary>A UUID or similar unique string that identifies this channel.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.Kind">
-            <summary>
-            Identifies this as a notification channel used to watch for changes to a resource, which is "api#channel".
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.Params__">
-            <summary>Additional parameters controlling delivery channel behavior. Optional.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.Payload">
-            <summary>A Boolean value to indicate whether payload is wanted. Optional.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.ResourceId">
-            <summary>
-            An opaque ID that identifies the resource being watched on this channel. Stable across different API
-            versions.
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.ResourceUri">
-            <summary>A version-specific identifier for the watched resource.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.Token">
-            <summary>
-            An arbitrary string delivered to the target address with each notification delivered over this channel.
-            Optional.
-            </summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.Type">
-            <summary>The type of delivery mechanism used for this channel.</summary>
-        </member>
-        <member name="P:Google.Apis.Storage.v1.Data.Channel.ETag">
             <summary>The ETag of the item.</summary>
         </member>
         <member name="T:Google.Apis.Storage.v1.Data.ComposeRequest">
