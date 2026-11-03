@@ -280,7 +280,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			if (api != null)
 			{
 				int status = (int)api.HttpStatusCode;
-				if (status == 408 || status == 429 || (status >= 500 && status <= 599)) return true;
+				if (status == 408 || status == 429 || status == 500 || status == 502 || status == 503 || status == 504) return true;
 				string details = api.Error != null && !string.IsNullOrEmpty(api.Error.Message) ? api.Error.Message : api.Message;
 				return status == 400 && IsChecksumMismatch(details);
 			}
@@ -296,7 +296,18 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var random = new Random();
 			for (int attempt = 1; ; attempt++)
 			{
-				try { return call(); }
+				try
+				{
+					try { return call(); }
+					catch (AggregateException wrapped) when (wrapped.InnerExceptions.Count == 1)
+					{
+						// The library's synchronous download and upload wrap some failures, a timeout in
+						// particular, in an AggregateException: rethrow the real one so it is classified
+						// and translated like any other.
+						System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(wrapped.InnerException).Throw();
+						throw; // not reached
+					}
+				}
 				catch (Exception e) when (attempt < MaxAttempts && IsTransient(e))
 				{
 					var delay = TimeSpan.FromMilliseconds(1000 * (1 << (attempt - 1)) + random.Next(0, 500));
@@ -358,7 +369,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				return false;
 			}
 			catch (Google.GoogleApiException probe) when (probe.HttpStatusCode == System.Net.HttpStatusCode.NotFound) { return true; }
-			catch (Exception probe) when (IsTranslatable(probe)) { return IsBucketNotFound(e); }
+			catch (Exception) { return IsBucketNotFound(e); } // any other failure of the check: the text decides
 		}
 
 		/// <summary>
@@ -1254,6 +1265,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			/// </summary>
 			private static async Task<string> ReadIdentityProviderBodyAsync(HttpResponseMessage response, string tokenEndpoint, CancellationToken ct)
 			{
+				ct.ThrowIfCancellationRequested();
 				long? declared = response.Content.Headers.ContentLength;
 				if (declared.HasValue && declared.Value > MaxIdentityProviderResponseBytes)
 					throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(tokenEndpoint) + "' sent a response larger than 1 MB; a token response is a few kilobytes. Check TokenEndpoint.");
@@ -1277,7 +1289,18 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 										throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(tokenEndpoint) + "' sent a response larger than 1 MB; a token response is a few kilobytes. Check TokenEndpoint.");
 									buffer.Write(chunk, 0, read);
 								}
-								return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+								// Like ReadAsStringAsync: the charset from Content-Type (UTF-8 when absent or unknown),
+								// and a leading byte-order mark is removed, so it cannot break the JSON parse.
+								Encoding encoding = Encoding.UTF8;
+								var mediaType = response.Content.Headers.ContentType;
+								if (mediaType != null && !string.IsNullOrEmpty(mediaType.CharSet))
+								{
+									try { encoding = Encoding.GetEncoding(mediaType.CharSet.Trim('"')); }
+									catch (ArgumentException) { }
+								}
+								buffer.Position = 0;
+								using (var reader = new StreamReader(buffer, encoding, true))
+									return reader.ReadToEnd();
 							}
 						}
 						catch (Exception e) when (!(e is IdentityProviderException) && !ct.IsCancellationRequested && timeout.IsCancellationRequested)
@@ -1456,7 +1479,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 		/// <summary>
 		/// Text from an outside party made safe for an error message: control characters (line breaks
-		/// included) become spaces and the result is cut to maxLength characters, with "..." when cut.
+		/// included), Unicode line separators and bidirectional overrides become spaces and the result is cut to maxLength characters, with "..." when cut.
 		/// </summary>
 		internal static string CleanForMessage(string text, int maxLength)
 		{
@@ -1464,8 +1487,16 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var sb = new StringBuilder(Math.Min(text.Length, maxLength));
 			foreach (char c in text)
 			{
-				if (sb.Length == maxLength) return sb.ToString() + "...";
-				sb.Append(char.IsControl(c) ? ' ' : c);
+				if (sb.Length == maxLength)
+				{
+					// Never end on half of a surrogate pair.
+					if (char.IsHighSurrogate(sb[sb.Length - 1])) sb.Length--;
+					return sb.ToString() + "...";
+				}
+				// Line and paragraph separators and bidirectional overrides can fake or reorder log text too.
+				bool unsafeChar = char.IsControl(c) || c == '\u2028' || c == '\u2029'
+					|| (c >= '\u202A' && c <= '\u202E') || (c >= '\u2066' && c <= '\u2069');
+				sb.Append(unsafeChar ? ' ' : c);
 			}
 			return sb.ToString();
 		}
@@ -1668,13 +1699,29 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var storageClient = GetStorageClient(auth);
 			try
 			{
-				// The Storage library retries a delete only when it carries a generation, so read it first:
-				// the delete is then retried on transient errors and can never remove a newer object
-				// written between two attempts. If the object is replaced between the read and the delete
-				// (412), the new generation is read and the delete repeated, up to 3 times.
+				// The Storage library retries a delete only when it carries a generation, so read it first and
+				// delete that generation. If the object is replaced between the read and the delete (412), the
+				// new generation is read and the delete repeated, up to 3 times: like an unconditional delete,
+				// the action removes whatever object has the name.
 				for (int attempt = 1; ; attempt++)
 				{
-					long? generation = storageClient.GetObject(ssBucketName, ssObjectName).Generation;
+					long? generation;
+					try
+					{
+						generation = storageClient.GetObject(ssBucketName, ssObjectName).Generation;
+					}
+					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && attempt > 1)
+					{
+						// Deleted by someone else after our 412: the object is gone, as asked.
+						return;
+					}
+					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.Forbidden && attempt == 1)
+					{
+						// No permission to read the object (a role with storage.objects.delete only): delete
+						// it unconditionally, as before 1.7.3, without the automatic retries.
+						storageClient.DeleteObject(ssBucketName, ssObjectName);
+						return;
+					}
 					try
 					{
 						storageClient.DeleteObject(ssBucketName, ssObjectName, new DeleteObjectOptions { IfGenerationMatch = generation });
@@ -1755,8 +1802,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			if (ssExpirationMinutes > 10080)
 				throw new ArgumentException("ExpirationMinutes cannot exceed 10080 minutes (7 days), the maximum validity of a Google Cloud V4 signed URL (received " + ssExpirationMinutes + ").");
 
-			// Operation is checked before the signer is built: with federation, building it runs a token
-			// exchange, whose timeout or sign-in error would otherwise hide a typo in Operation.
+			// Operation is checked before the Authentication fields, so a typo in it is reported as such
+			// even when the credentials are also misconfigured.
 			HttpMethod method;
 			switch ((ssOperation ?? "").Trim().ToUpperInvariant())
 			{

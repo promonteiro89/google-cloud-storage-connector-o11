@@ -149,6 +149,25 @@ public static class RetryTests
         TestLog.Check("Delete (e): a missing object fails with \"Object 'docs/a.txt' was not found\" and sends no DELETE",
             ex != null && ex.Message.StartsWith("Object 'docs/a.txt' was not found", StringComparison.Ordinal) && Count(backend, IsDelete) == 0, Detail(ex, backend));
 
+        // (g) no permission to read: delete without the read, as in 1.7.2
+        backend = NewBackend(r => { if (IsMetaGet(r)) return GoogleError(403, "Permission denied"); if (IsDelete(r)) return NoContent(); return null; });
+        ex = FederationTests.Throws(() => Ext().MssObject_Delete(Auth(), "my-bucket", "docs/a.txt"));
+        del = Where(backend, IsDelete);
+        TestLog.Check("Delete (g): a 403 on the read falls back to one DELETE without ifGenerationMatch",
+            ex == null && del.Count == 1 && !del[0].Uri.Query.Contains("ifGenerationMatch"), Detail(ex, backend));
+
+        // (h) a 412, then the re-read finds the object gone (someone else deleted it): success
+        int metaGets = 0;
+        backend = NewBackend(r =>
+        {
+            if (IsMetaGet(r) && ++metaGets == 2) return GoogleError(404, "No such object: my-bucket/docs/a.txt");
+            if (IsDelete(r)) return GoogleError(412, "At least one of the pre-conditions you specified did not hold.");
+            return null;
+        });
+        ex = FederationTests.Throws(() => Ext().MssObject_Delete(Auth(), "my-bucket", "docs/a.txt"));
+        TestLog.Check("Delete (h): a 412 followed by a re-read 404 counts as deleted (no error, 1 DELETE)",
+            ex == null && Count(backend, IsDelete) == 1, Detail(ex, backend));
+
         // (f) a permanent error is not retried
         backend = NewBackend(r => { if (IsDelete(r)) return GoogleError(403, "Permission denied"); return null; });
         ex = FederationTests.Throws(() => Ext().MssObject_Delete(Auth(), "my-bucket", "docs/a.txt"));
@@ -320,6 +339,14 @@ public static class RetryTests
         TestLog.Check("GetSignedUrl: Operation 'downloads' fails with 'Invalid Operation' and contacts nobody (0 requests)",
             ex is ArgumentException && Has(ex.Message, "Invalid Operation 'downloads'") && requests == 0,
             (ex == null ? "no exception" : ex.GetType().Name + ": " + ex.Message) + "; requests=" + requests);
+
+        // With the Authentication also invalid (no ClientSecret), the Operation error is the one reported.
+        var bad = FederationTests.ClientCredentials(null);
+        bad.ssSTGCS_Authentication.ssClientSecret = "";
+        ex = FederationTests.Throws(() => Ext().MssObject_GetSignedUrl(bad, "downloads", "my-bucket", "a.txt", 5, "", out url));
+        TestLog.Check("GetSignedUrl: a bad Operation is reported before a bad Authentication",
+            ex is ArgumentException && Has(ex.Message, "Invalid Operation 'downloads'"),
+            ex == null ? "no exception" : ex.GetType().Name + ": " + ex.Message);
     }
 
     // ---- 7. Trimmed credentials -----------------------------------------------------------------------
@@ -387,6 +414,9 @@ public static class RetryTests
             && (string)clean.Invoke(null, new object[] { "a\tb", 10 }) == "a b"
             && (string)clean.Invoke(null, new object[] { "abcde", 3 }) == "abc..."
             && (string)clean.Invoke(null, new object[] { "abc", 3 }) == "abc");
+        TestLog.Check("CleanForMessage: U+2028 and U+202E become spaces; a cut never ends on half a surrogate pair",
+            (string)clean.Invoke(null, new object[] { "a\u2028b\u202Ec", 10 }) == "a b c"
+            && (string)clean.Invoke(null, new object[] { "ab\uD83D\uDE00cd", 3 }) == "ab...");
     }
 
     /// <summary>A response body whose length is not declared up front (like a chunked response).</summary>
@@ -414,6 +444,20 @@ public static class RetryTests
         ex = FederationTests.Throws(() => Ext().MssBucket_Exists(IdpAuth(FakeFederationBackend.IdpTokenEndpoint), "my-bucket", out exists));
         TestLog.Check("IdP response: a 2 MB body of undeclared length fails with 'larger than 1 MB'",
             ex != null && Has(ex.Message, "larger than 1 MB"), ex == null ? "no exception" : FederationTests.AllMessages(ex));
+
+        // A token response that starts with a UTF-8 byte-order mark still signs in.
+        var bomJson = Encoding.UTF8.GetBytes("{\"access_token\":\"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ3b3JrbG9hZCJ9.c2ln\",\"token_type\":\"Bearer\",\"expires_in\":3600}");
+        var withBom = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(bomJson).ToArray();
+        var bomBackend = NewBackend(r =>
+        {
+            if (r.Uri.Host != "idp.example.test") return null;
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(withBom) };
+            response.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+            return response;
+        });
+        exists = false;
+        ex = FederationTests.Throws(() => Ext().MssBucket_Exists(IdpAuth(FakeFederationBackend.IdpTokenEndpoint), "my-bucket", out exists));
+        TestLog.Check("IdP response: a token response starting with a UTF-8 byte-order mark still signs in", ex == null && exists, Detail(ex, bomBackend));
 
         // Control: the normal token response (a few hundred bytes) still works end to end.
         var backend = NewBackend(null);

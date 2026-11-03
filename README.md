@@ -188,7 +188,7 @@ Downloads an object's content and content type.
 
 The download is checked against the object's stored checksum; a mismatch fails with a "did not match the object's checksum ... retry" error and returns no content. An object stored with `Content-Encoding: gzip` comes back decompressed, as its original bytes.
 
-A transient Google error, a dropped connection or a checksum mismatch repeats the download, up to 3 attempts, about 1 and then 2 seconds apart. Timeouts are not repeated. `Content` is returned in memory, so an object larger than about 2 GB fails with an error saying so; give the client a signed URL for those (`Object_GetSignedUrl`, Operation `Download`).
+A transient Google error, a dropped connection or a checksum mismatch repeats the download, up to 3 attempts, about 1 and then 2 seconds apart. Timeouts are not repeated. `Content` is held in the server's memory, so large objects can exhaust it well before the hard limit of about 2 GB, which fails with an error saying so. For large objects, give the client a signed URL instead (`Object_GetSignedUrl`, Operation `Download`).
 
 #### `Object_List`
 Lists objects in a bucket, optionally filtered by prefix, with pagination and folder-style listing.
@@ -252,7 +252,7 @@ The action lists every matching object first, then deletes them one at a time. A
 #### `Object_Delete`
 Deletes an object. Deleting an object that doesn't exist raises an "Object ... was not found" error.
 
-The action reads the object's generation first and deletes only that generation, so transient Google errors are retried safely (one extra request per call). If another request replaces the object in between, the new generation is read and the delete repeated, up to 3 times.
+The action reads the object's generation first and deletes that generation, so transient Google errors are retried (one extra request per call, using `storage.objects.get`). If another request replaces the object in between, the new generation is read and the delete repeated, up to 3 times. With a role that can delete but not read objects, the object is deleted without the read and without retries.
 
 Whether the data can be recovered depends on the bucket: with Object Versioning on, the deleted object is kept as a noncurrent version, and with soft delete on (Google's default for new buckets, 7 days), it can be restored until the retention period ends. Only without both is the deletion permanent.
 
