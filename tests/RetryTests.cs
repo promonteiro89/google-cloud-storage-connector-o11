@@ -13,6 +13,7 @@ using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 using OutSystems.NssGoogleCloudStorage_ext;
 using Rec = FakeFederationBackend.Recorded;
 
@@ -32,6 +33,8 @@ public static class RetryTests
         try
         {
             Delete();
+            GuardedWriteAmbiguity();
+            DeleteMissingBucketProbe();
             Download();
             DownloadTooLarge();
             Upload();
@@ -75,14 +78,28 @@ public static class RetryTests
     }
 
     private static HttpResponseMessage NoContent() { return new HttpResponseMessage(HttpStatusCode.NoContent) { Content = new StringContent("") }; }
+    private static HttpResponseMessage Json(HttpStatusCode status, object value) { return new HttpResponseMessage(status) { Content = new StringContent(JsonConvert.SerializeObject(value), Encoding.UTF8, "application/json") }; }
 
     private static bool IsStorage(Rec r) { return r.Uri.Host == "storage.googleapis.com" && r.Uri.AbsolutePath.StartsWith("/storage/v1/b/", StringComparison.Ordinal); }
     private static bool IsObject(Rec r) { var s = r.Uri.AbsolutePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries); return IsStorage(r) && s.Length == 6 && s[4] == "o"; }
     private static bool IsMedia(Rec r) { return IsObject(r) && r.Method == HttpMethod.Get && r.Uri.Query.Contains("alt=media"); }
     private static bool IsMetaGet(Rec r) { return IsObject(r) && r.Method == HttpMethod.Get && !r.Uri.Query.Contains("alt=media"); }
     private static bool IsDelete(Rec r) { return IsObject(r) && r.Method == HttpMethod.Delete; }
+    private static bool IsRewrite(Rec r) { var s = r.Uri.AbsolutePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries); return r.Method == HttpMethod.Post && s.Length == 11 && s[4] == "o" && s[6] == "rewriteTo"; }
     private static bool IsList(Rec r) { var s = r.Uri.AbsolutePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries); return IsStorage(r) && r.Method == HttpMethod.Get && s.Length == 5 && s[4] == "o"; }
     private static bool IsSessionStart(Rec r) { return r.Uri.Host == "storage.googleapis.com" && r.Uri.AbsolutePath.StartsWith("/upload/storage/v1/b/", StringComparison.Ordinal) && r.Method == HttpMethod.Post; }
+
+    private static string Query(Uri uri, string name)
+    {
+        string query = uri.Query;
+        if (string.IsNullOrEmpty(query)) return null;
+        foreach (string pair in query.TrimStart('?').Split('&'))
+        {
+            string[] parts = pair.Split(new[] { '=' }, 2);
+            if (Uri.UnescapeDataString(parts[0]) == name) return parts.Length == 2 ? Uri.UnescapeDataString(parts[1]) : "";
+        }
+        return null;
+    }
 
     private static int Count(FakeFederationBackend b, Func<Rec, bool> p) { lock (b.Requests) return b.Requests.Count(p); }
     private static List<Rec> Where(FakeFederationBackend b, Func<Rec, bool> p) { lock (b.Requests) return b.Requests.Where(p).ToList(); }
@@ -173,6 +190,92 @@ public static class RetryTests
         ex = FederationTests.Throws(() => Ext().MssObject_Delete(Auth(), "my-bucket", "docs/a.txt"));
         TestLog.Check("Delete (f): a 403 is not retried (1 DELETE) and says Access denied",
             ex != null && Has(ex.Message, "Access denied") && Count(backend, IsDelete) == 1, Detail(ex, backend));
+    }
+
+    private static void GuardedWriteAmbiguity()
+    {
+        int deletes = 0;
+        var backend = NewBackend(r =>
+        {
+            if (IsDelete(r)) return ++deletes == 1 ? GoogleError(503, "Service Unavailable") : GoogleError(412, "conditionNotMet");
+            return null;
+        });
+        var ex = FederationTests.Throws(() => Ext().MssObject_Delete(Auth(), "my-bucket", "docs/a.txt"));
+        var ds = Where(backend, IsDelete);
+        TestLog.Check("Delete resent then 412 means the earlier generation was removed (no re-read)",
+            ex == null && Count(backend, IsMetaGet) == 1 && ds.Count == 2 && ds.All(r => Query(r.Uri, "ifGenerationMatch") == "1001"), Detail(ex, backend));
+
+        int get = 0, delete = 0;
+        backend = NewBackend(r =>
+        {
+            if (IsMetaGet(r))
+            {
+                get++;
+                if (get == 2) return Json(HttpStatusCode.OK, new { kind = "storage#object", bucket = "my-bucket", name = "docs/a.txt", generation = "1002", metageneration = "1" });
+            }
+            if (IsDelete(r)) return ++delete == 1 ? GoogleError(412, "conditionNotMet") : NoContent();
+            return null;
+        });
+        ex = FederationTests.Throws(() => Ext().MssObject_Delete(Auth(), "my-bucket", "docs/a.txt"));
+        ds = Where(backend, IsDelete);
+        TestLog.Check("Delete first-send 412 re-reads and deletes the replacement generation",
+            ex == null && Count(backend, IsMetaGet) == 2 && ds.Count == 2 && Query(ds[0].Uri, "ifGenerationMatch") == "1001" && Query(ds[1].Uri, "ifGenerationMatch") == "1002", Detail(ex, backend));
+
+        backend = NewBackend(r => IsDelete(r) ? GoogleError(503, "Service Unavailable") : null);
+        ex = FederationTests.Throws(() => Ext().MssObject_Delete(Auth(), "my-bucket", "docs/a.txt"));
+        int deleteRetryWaits;
+        lock (Sleeps) deleteRetryWaits = Sleeps.Count;
+        TestLog.Check("Guarded delete disables library retries and caps extension retries at three",
+            ex != null && Has(ex.Message, "(503") && Count(backend, IsDelete) == 3 && deleteRetryWaits == 2, Detail(ex, backend) + "; retry waits=" + deleteRetryWaits);
+
+        // UpdateMetadata: a 503 followed by 412 is ambiguous; an initial 412 is an ordinary conflict.
+        var noMeta = new RLGCS_MetadataEntryRecordList();
+        int patches = 0;
+        backend = NewBackend(r => r.Method == FakeFederationBackend.Patch
+            ? (++patches == 1 ? GoogleError(503, "Service Unavailable") : GoogleError(412, "conditionNotMet")) : null);
+        ex = FederationTests.Throws(() => Ext().MssObject_UpdateMetadata(Auth(), "my-bucket", "docs/a.txt", "text/csv", "", "", "", noMeta));
+        TestLog.Check("UpdateMetadata resent 412 explains it may already have been applied",
+            ex != null && Has(ex.Message, "may already have been applied") && Count(backend, r => r.Method == FakeFederationBackend.Patch) == 2, Detail(ex, backend));
+
+        backend = NewBackend(r => r.Method == FakeFederationBackend.Patch ? GoogleError(412, "conditionNotMet") : null);
+        ex = FederationTests.Throws(() => Ext().MssObject_UpdateMetadata(Auth(), "my-bucket", "docs/a.txt", "text/csv", "", "", "", noMeta));
+        TestLog.Check("UpdateMetadata first-send 412 retains nothing-was-changed message",
+            ex != null && Has(ex.Message, "nothing was changed"), Detail(ex, backend));
+
+        // Move's guarded delete follows the same ambiguity rule.
+        int moveDeletes = 0;
+        backend = NewBackend(r =>
+        {
+            if (IsRewrite(r)) return Json(HttpStatusCode.OK, new { kind = "storage#rewriteResponse", done = true, resource = new { kind = "storage#object", bucket = "dst-bucket", name = "out/x.txt", generation = "5000", metageneration = "1" } });
+            if (IsDelete(r)) return ++moveDeletes == 1 ? GoogleError(503, "Service Unavailable") : GoogleError(412, "conditionNotMet");
+            return null;
+        });
+        ex = FederationTests.Throws(() => Ext().MssObject_Move(Auth(), "src-bucket", "in/x.txt", "dst-bucket", "out/x.txt"));
+        TestLog.Check("Move guarded delete resent 412 means source delete completed",
+            ex == null && Count(backend, IsRewrite) == 1 && Count(backend, IsDelete) == 2, Detail(ex, backend));
+    }
+
+    private static void DeleteMissingBucketProbe()
+    {
+        var backend = NewBackend(r =>
+        {
+            if (IsMetaGet(r)) return GoogleError(404, "Not Found");
+            if (IsList(r)) return GoogleError(404, "Not Found");
+            return null;
+        });
+        var ex = FederationTests.Throws(() => Ext().MssObject_Delete(Auth(), "b", "o"));
+        TestLog.Check("Delete unclear 404 and listing 404 reports a missing bucket",
+            ex != null && ex.Message.StartsWith("Bucket 'b' does not exist", StringComparison.Ordinal), Detail(ex, backend));
+
+        backend = NewBackend(r =>
+        {
+            if (IsMetaGet(r)) return GoogleError(404, "Not Found");
+            if (IsList(r)) return Json(HttpStatusCode.OK, new { kind = "storage#objects" });
+            return null;
+        });
+        ex = FederationTests.Throws(() => Ext().MssObject_Delete(Auth(), "b", "o"));
+        TestLog.Check("Delete unclear 404 and listing success reports a missing object",
+            ex != null && ex.Message.StartsWith("Object 'o' was not found", StringComparison.Ordinal), Detail(ex, backend));
     }
 
     // ---- 2. Object_Download -------------------------------------------------------------------------
