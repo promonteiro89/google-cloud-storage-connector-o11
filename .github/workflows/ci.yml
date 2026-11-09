@@ -14,11 +14,14 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: windows-latest
+    # Read-only token: this job only checks out code and runs the tests.
+    permissions:
+      contents: read
     env:
       # Empty on fork PRs (secrets are not exposed) -> build/test steps skip gracefully.
       OS_DEPS_KEY: ${{ secrets.OS_DEPS_SSH_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Notice (fork PRs)
         if: env.OS_DEPS_KEY == ''
@@ -30,7 +33,7 @@ jobs:
 
       - name: Fetch OutSystems platform assemblies (private, read-only)
         if: env.OS_DEPS_KEY != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: promonteiro89/outsystems-platform-deps
           ssh-key: ${{ secrets.OS_DEPS_SSH_KEY }}
@@ -43,7 +46,7 @@ jobs:
 
       - name: Setup MSBuild
         if: env.OS_DEPS_KEY != ''
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
 
       - name: Build extension (.NET Framework 4.8)
         if: env.OS_DEPS_KEY != ''
@@ -54,7 +57,7 @@ jobs:
 
       - name: Cache fake-gcs-server
         if: env.OS_DEPS_KEY != ''
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: tests/.tools/fake-gcs-server.exe
           key: fake-gcs-server-1.54.0-windows-amd64
@@ -81,7 +84,7 @@ jobs:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       OS_DEPS_KEY: ${{ secrets.OS_DEPS_SSH_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Check live configuration
         shell: powershell
@@ -95,7 +98,7 @@ jobs:
           }
 
       - name: Fetch OutSystems platform assemblies (private, read-only)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: promonteiro89/outsystems-platform-deps
           ssh-key: ${{ secrets.OS_DEPS_SSH_KEY }}
@@ -106,7 +109,7 @@ jobs:
         run: Copy-Item os-deps\*.dll Source\NET\Bin\ -Force
 
       - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
 
       - name: Build extension (.NET Framework 4.8)
         shell: powershell

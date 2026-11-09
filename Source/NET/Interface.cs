@@ -34,7 +34,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssPrefix">Optional filter to only return objects whose names start with this string.</param>
-		/// <param name="ssMaxResults">Maximum number of objects to return in this call. 0 (default) returns all objects. When greater than 0, use NextPageToken to fetch the following page.</param>
+		/// <param name="ssMaxResults">Results per call: objects plus PrefixList entries together. Google returns at most 1,000 per call, so a larger value still returns up to 1,000, with NextPageToken set when more exist. 0 (default) returns everything in one call; negative values are rejected.</param>
 		/// <param name="ssPageToken">The NextPageToken returned by a previous call. Leave empty to start from the first page.</param>
 		/// <param name="ssDelimiter">Set to &quot;/&quot; for folder-style navigation: objects in nested &quot;subfolders&quot; are grouped into PrefixList instead of being returned individually. Leave empty to list all objects recursively.</param>
 		/// <param name="ssObjectList">A list of records containing the names, sizes, and metadata of the objects found in the bucket.</param>

@@ -107,7 +107,7 @@ if (-not $SkipEmulator -and $Category -ne "Live") {
 }
 
 # --- Test harness (compiled against the real extension DLL, .NET Framework 4.8) ------
-$sources = @("TestHarness.cs", "FederationTests.cs", "CacheIsolationTests.cs", "RegressionTests.cs", "SafetyTests.cs", "LiveFederationTests.cs") | ForEach-Object { Join-Path $testsDir $_ }
+$sources = @("TestHarness.cs", "FederationTests.cs", "CacheIsolationTests.cs", "RegressionTests.cs", "SafetyTests.cs", "RetryTests.cs", "LiveFederationTests.cs") | ForEach-Object { Join-Path $testsDir $_ }
 $refs = @($extDll, $osrtDll) + (@("Google.Apis.dll", "Google.Apis.Core.dll", "Google.Apis.Auth.dll", "Newtonsoft.Json.dll") | ForEach-Object { Join-Path $bin $_ }) +
         @("System.dll", "System.Core.dll", "System.Net.Http.dll")
 

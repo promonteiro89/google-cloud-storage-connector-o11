@@ -259,6 +259,119 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 		} // MssObject_Move
 
+		// ---- Retries for the calls the Storage library does not retry -----------------------------------
+		// Object_Download (DownloadObjectOptions has no RetryOptions in 5.0.0) and Object_Upload (the
+		// request that opens the upload session is not retried) repeat the whole call here. Both are safe
+		// to repeat: a download is a read, and the upload's bytes are already in memory, so a repeat
+		// stores the same content. Timeouts are not repeated: each one already waited 100 seconds.
+
+		private const int MaxAttempts = 3;
+
+		/// <summary>Test seam: how the retry loop waits between attempts. Never set in production.</summary>
+		internal static Action<TimeSpan> RetrySleepOverride { get; set; }
+
+		/// <summary>
+		/// A failure worth repeating: Google's 408, 429 and 5xx answers, a CRC32C mismatch on upload, a
+		/// network failure, or a broken or corrupted download stream.
+		/// </summary>
+		internal static bool IsTransient(Exception e)
+		{
+			var api = e as Google.GoogleApiException;
+			if (api != null)
+			{
+				int status = (int)api.HttpStatusCode;
+				if (status == 408 || status == 429 || status == 500 || status == 502 || status == 503 || status == 504) return true;
+				string details = api.Error != null && !string.IsNullOrEmpty(api.Error.Message) ? api.Error.Message : api.Message;
+				return status == 400 && IsChecksumMismatch(details);
+			}
+			return e is HttpRequestException || e is IOException;
+		}
+
+		/// <summary>
+		/// Runs the call up to 3 times while it fails with a transient error, waiting about 1 and then 2
+		/// seconds (with jitter) between attempts. The last failure is rethrown unchanged.
+		/// </summary>
+		private static T WithRetry<T>(Func<T> call)
+		{
+			var random = new Random();
+			for (int attempt = 1; ; attempt++)
+			{
+				try
+				{
+					try { return call(); }
+					catch (AggregateException wrapped) when (wrapped.InnerExceptions.Count == 1)
+					{
+						// The library's synchronous download and upload wrap some failures, a timeout in
+						// particular, in an AggregateException: rethrow the real one so it is classified
+						// and translated like any other.
+						System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(wrapped.InnerException).Throw();
+						throw; // not reached
+					}
+				}
+				catch (Exception e) when (attempt < MaxAttempts && IsTransient(e))
+				{
+					var delay = TimeSpan.FromMilliseconds(1000 * (1 << (attempt - 1)) + random.Next(0, 500));
+					var sleep = RetrySleepOverride;
+					if (sleep != null) sleep(delay); else Thread.Sleep(delay);
+				}
+			}
+		}
+
+		/// <summary>The largest object Object_Download can return: the most a .NET byte array holds (~2 GB). Settable only for tests.</summary>
+		internal static long MaxDownloadBytes = 0x7FFFFFC7;
+
+		/// <summary>Thrown when a download outgrows MaxDownloadBytes. Not an IOException, so it is never retried.</summary>
+		private sealed class DownloadTooLargeException : Exception
+		{
+			public DownloadTooLargeException() : base("The object is larger than Object_Download can return.") { }
+		}
+
+		/// <summary>An in-memory download buffer that stops at MaxDownloadBytes with DownloadTooLargeException.</summary>
+		private sealed class BoundedMemoryStream : MemoryStream
+		{
+			private readonly long _max;
+			public BoundedMemoryStream(long max) { _max = max; }
+
+			public override void Write(byte[] buffer, int offset, int count)
+			{
+				if (Length + count > _max) throw new DownloadTooLargeException();
+				base.Write(buffer, offset, count);
+			}
+
+			public override void WriteByte(byte value)
+			{
+				if (Length + 1 > _max) throw new DownloadTooLargeException();
+				base.WriteByte(value);
+			}
+
+			public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+			{
+				Write(buffer, offset, count);
+				return Task.FromResult(0);
+			}
+		}
+
+		/// <summary>
+		/// For a 404 on an object, decides whether the bucket is the missing part. Google's two messages
+		/// ("No such object: ..." and "The specified bucket does not exist.") settle it. Any other text
+		/// (an emulator, a proxy, a future wording) is checked by listing at most one object in the
+		/// bucket, which needs only object permissions: a 404 there means the bucket is missing. If that
+		/// check fails for another reason, the message text decides, as before 1.7.3.
+		/// </summary>
+		private static bool IsMissingBucket(StorageClient storageClient, Google.GoogleApiException e, string bucketName, string objectName)
+		{
+			string msg = (e.Error != null ? e.Error.Message : null) ?? e.Message ?? "";
+			if (msg.IndexOf("No such object", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+			if (msg.IndexOf("specified bucket does not exist", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+			try
+			{
+				storageClient.ListObjects(bucketName, objectName, new ListObjectsOptions { PageSize = 1 }).AsRawResponses().FirstOrDefault();
+				return false;
+			}
+			catch (Google.GoogleApiException probe) when (probe.HttpStatusCode == System.Net.HttpStatusCode.NotFound) { return true; }
+			catch (Exception) { return IsBucketNotFound(e); } // any other failure of the check: the text decides
+		}
+
 		/// <summary>
 		/// Rejects an empty bucket name before any request. Without it the SDK fails with an unreadable
 		/// client-side "Parameter validation failed" error, after the action may already have made calls.
@@ -354,9 +467,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					}
 				}
 			}
-			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && !IsBucketNotFound(e))
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && !IsMissingBucket(storageClient, e, ssBucketName, ssObjectName))
 			{
 				ssExists = false;
+			}
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+			{
+				// The bucket is missing: say so whatever wording the 404 had.
+				string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
+				throw new Exception("Bucket '" + ssBucketName + "' does not exist (names are case-sensitive and must match exactly). Details: " + details, e);
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName); }
 		} // MssObject_GetMetadata
@@ -398,12 +517,14 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var s = record.ssSTGCS_Authentication;
 			return new AuthConfig
 			{
-				ProjectId = s.ssProjectId ?? "",
+				// Trimmed: a trailing space or newline from a Site Property would otherwise break key
+				// sign-in or the project-scoped bucket actions with an unclear error.
+				ProjectId = (s.ssProjectId ?? "").Trim(),
 				AuthenticationMethod = s.ssAuthenticationMethod ?? "",
-				ClientEmail = s.ssClientEmail ?? "",
+				ClientEmail = (s.ssClientEmail ?? "").Trim(),
 				PrivateKey = s.ssPrivateKey ?? "",
 				WorkloadIdentityProvider = s.ssWorkloadIdentityProvider ?? "",
-				ServiceAccountEmail = s.ssServiceAccountEmail ?? "",
+				ServiceAccountEmail = (s.ssServiceAccountEmail ?? "").Trim(),
 				TokenEndpoint = s.ssTokenEndpoint ?? "",
 				ClientId = s.ssClientId ?? "",
 				ClientSecret = s.ssClientSecret ?? "",
@@ -499,6 +620,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					if (entry != null) return entry.Value;
 
 					T value = factory(key); // may throw: nothing has been cached yet
+					// Keep the cap at every insert, not only at the once-a-minute sweep: many new
+					// identities within one minute would otherwise grow the cache without bound.
+					if (_entries.Count >= MaxEntries) Sweep(DateTime.UtcNow, MaxEntries - 1);
 					_entries[key] = new Entry(value, absoluteExpiryUtc);
 					return value;
 				}
@@ -520,7 +644,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				return entry;
 			}
 
-			/// <summary>At most once a minute, from any access: drop the expired entries, then the least recently used surplus.</summary>
+			/// <summary>At most once a minute, from any access: drop the expired entries, then the least recently used surplus. Inserts also enforce the cap.</summary>
 			private void SweepIfDue()
 			{
 				DateTime now = DateTime.UtcNow;
@@ -529,10 +653,11 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					if (now < _nextSweepUtc) return;
 					_nextSweepUtc = now + SweepInterval;
 				}
-				Sweep(now);
+				Sweep(now, MaxEntries);
 			}
 
-			private void Sweep(DateTime utcNow)
+			/// <summary>Drops the expired entries, then the least recently used until at most maxLive remain.</summary>
+			private void Sweep(DateTime utcNow, int maxLive)
 			{
 				var live = new List<KeyValuePair<string, Entry>>();
 				foreach (var pair in _entries)
@@ -547,8 +672,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					Remove(pair.Key, pair.Value);
 				}
 
-				if (live.Count <= MaxEntries) return;
-				foreach (var pair in live.OrderBy(p => p.Value.LastUsedUtc).Take(live.Count - MaxEntries))
+				if (live.Count <= maxLive) return;
+				foreach (var pair in live.OrderBy(p => p.Value.LastUsedUtc).Take(live.Count - maxLive))
 					Remove(pair.Key, pair.Value);
 			}
 
@@ -670,17 +795,20 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			string trimmed = (tokenEndpoint ?? string.Empty).Trim();
 			Uri uri;
 			bool absolute = Uri.TryCreate(trimmed, UriKind.Absolute, out uri);
-			// Echo the endpoint without user info or query, so credentials never appear in the error.
-			string display = absolute ? uri.GetLeftPart(UriPartial.Path) : trimmed;
+			// Echo the endpoint without user info or query, so credentials never appear in the error. Only an
+			// http(s) URL is echoed: in anything else ('host/path?secret=..', or 'user:pw@host', which parses
+			// as the scheme 'user') the secret parts cannot be told apart.
+			bool web = absolute && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
+			string display = web ? "'" + uri.GetLeftPart(UriPartial.Path) + "'" : "(the value given is not an absolute http(s) URL)";
 
-			if (absolute && !string.IsNullOrEmpty(uri.UserInfo))
+			if (web && !string.IsNullOrEmpty(uri.UserInfo))
 				throw new ArgumentException("TokenEndpoint must not contain user information (a 'user:password@' part). Remove the credentials from the URL and let ClientId/ClientSecret authenticate the request.");
 
 			bool ok = absolute
 				&& (uri.Scheme == Uri.UriSchemeHttps
 					|| (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback && HttpClientFactoryOverride != null));
 			if (!ok)
-				throw new ArgumentException("TokenEndpoint '" + display + "' must be an absolute https:// URL (for example 'https://login.microsoftonline.com/TENANT_ID/oauth2/v2.0/token').");
+				throw new ArgumentException("TokenEndpoint " + display + " must be an absolute https:// URL (for example 'https://login.microsoftonline.com/TENANT_ID/oauth2/v2.0/token').");
 		}
 
 		/// <summary>
@@ -1054,7 +1182,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 						HttpResponseMessage response;
 						try
 						{
-							response = await http.SendAsync(request, ct).ConfigureAwait(false);
+							// Headers only: the body is read below with a size limit.
+							response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
 						}
 						catch (Exception e) when (e is HttpRequestException || e is TaskCanceledException)
 						{
@@ -1068,7 +1197,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 						using (response)
 						{
-							string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+							string body = await ReadIdentityProviderBodyAsync(response, _tokenEndpoint, ct).ConfigureAwait(false);
 
 							// The production client follows no redirects (and the test one does not need to):
 							// a 3xx means TokenEndpoint points at a redirecting URL.
@@ -1103,7 +1232,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							string detail;
 							if (ParseOAuthError(body, out error, out description))
 							{
-								if (description != null && description.Length > 300) description = description.Substring(0, 300) + "...";
+								// Both fields come from the identity provider: bound their length and drop control
+								// characters, so they cannot flood or forge lines in the OutSystems error log.
+								error = CleanForMessage(error, 100);
+								description = CleanForMessage(description, 300);
 								detail = error == null && description == null
 									? "(the response body contained no 'error' or 'error_description')"
 									: error == null ? description : description == null ? error : error + ": " + description;
@@ -1119,6 +1251,61 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 								continue;
 
 							throw new IdentityProviderException("The identity provider rejected the client-credentials token request (" + (int)response.StatusCode + " " + (error ?? response.StatusCode.ToString()) + "): " + EndSentence(detail) + " Check TokenEndpoint, ClientId, ClientSecret, and Scope/Audience.");
+						}
+					}
+				}
+			}
+
+			/// <summary>Largest identity provider response read; a token response is a few kilobytes.</summary>
+			internal const int MaxIdentityProviderResponseBytes = 1024 * 1024;
+
+			/// <summary>
+			/// Reads the token endpoint's response body as UTF-8, failing beyond 1 MB instead of buffering
+			/// whatever the endpoint sends, and within 30 seconds (HttpClient's timeout stops at the headers).
+			/// </summary>
+			private static async Task<string> ReadIdentityProviderBodyAsync(HttpResponseMessage response, string tokenEndpoint, CancellationToken ct)
+			{
+				ct.ThrowIfCancellationRequested();
+				long? declared = response.Content.Headers.ContentLength;
+				if (declared.HasValue && declared.Value > MaxIdentityProviderResponseBytes)
+					throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(tokenEndpoint) + "' sent a response larger than 1 MB; a token response is a few kilobytes. Check TokenEndpoint.");
+
+				using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
+				{
+					timeout.CancelAfter(TimeSpan.FromSeconds(30));
+					// Disposing the response unblocks a read that ignores the token.
+					using (timeout.Token.Register(() => response.Dispose()))
+					{
+						try
+						{
+							using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+							using (var buffer = new MemoryStream())
+							{
+								var chunk = new byte[16384];
+								int read;
+								while ((read = await stream.ReadAsync(chunk, 0, chunk.Length, timeout.Token).ConfigureAwait(false)) > 0)
+								{
+									if (buffer.Length + read > MaxIdentityProviderResponseBytes)
+										throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(tokenEndpoint) + "' sent a response larger than 1 MB; a token response is a few kilobytes. Check TokenEndpoint.");
+									buffer.Write(chunk, 0, read);
+								}
+								// Like ReadAsStringAsync: the charset from Content-Type (UTF-8 when absent or unknown),
+								// and a leading byte-order mark is removed, so it cannot break the JSON parse.
+								Encoding encoding = Encoding.UTF8;
+								var mediaType = response.Content.Headers.ContentType;
+								if (mediaType != null && !string.IsNullOrEmpty(mediaType.CharSet))
+								{
+									try { encoding = Encoding.GetEncoding(mediaType.CharSet.Trim('"')); }
+									catch (ArgumentException) { }
+								}
+								buffer.Position = 0;
+								using (var reader = new StreamReader(buffer, encoding, true))
+									return reader.ReadToEnd();
+							}
+						}
+						catch (Exception e) when (!(e is IdentityProviderException) && !ct.IsCancellationRequested && timeout.IsCancellationRequested)
+						{
+							throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(tokenEndpoint) + "' did not finish sending its response within 30 seconds.", e);
 						}
 					}
 				}
@@ -1288,6 +1475,30 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				|| e is HttpRequestException
 				|| e is TaskCanceledException
 				|| e is IOException;
+		}
+
+		/// <summary>
+		/// Text from an outside party made safe for an error message: control characters (line breaks
+		/// included), Unicode line separators and bidirectional overrides become spaces and the result is cut to maxLength characters, with "..." when cut.
+		/// </summary>
+		internal static string CleanForMessage(string text, int maxLength)
+		{
+			if (text == null) return null;
+			var sb = new StringBuilder(Math.Min(text.Length, maxLength));
+			foreach (char c in text)
+			{
+				if (sb.Length == maxLength)
+				{
+					// Never end on half of a surrogate pair.
+					if (char.IsHighSurrogate(sb[sb.Length - 1])) sb.Length--;
+					return sb.ToString() + "...";
+				}
+				// Line and paragraph separators and bidirectional overrides can fake or reorder log text too.
+				bool unsafeChar = char.IsControl(c) || c == '\u2028' || c == '\u2029'
+					|| (c >= '\u202A' && c <= '\u202E') || (c >= '\u2066' && c <= '\u2069');
+				sb.Append(unsafeChar ? ' ' : c);
+			}
+			return sb.ToString();
 		}
 
 		/// <summary>Ends a message fragment with a period unless it already ends a sentence.</summary>
@@ -1488,7 +1699,48 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var storageClient = GetStorageClient(auth);
 			try
 			{
-				storageClient.DeleteObject(ssBucketName, ssObjectName);
+				// The Storage library retries a delete only when it carries a generation, so read it first and
+				// delete that generation. If the object is replaced between the read and the delete (412), the
+				// new generation is read and the delete repeated, up to 3 times: like an unconditional delete,
+				// the action removes whatever object has the name.
+				for (int attempt = 1; ; attempt++)
+				{
+					long? generation;
+					try
+					{
+						generation = storageClient.GetObject(ssBucketName, ssObjectName).Generation;
+					}
+					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && attempt > 1)
+					{
+						// Deleted by someone else after our 412: the object is gone, as asked.
+						return;
+					}
+					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.Forbidden && attempt == 1)
+					{
+						// No permission to read the object (a role with storage.objects.delete only): delete
+						// it unconditionally, as before 1.7.3, without the automatic retries.
+						storageClient.DeleteObject(ssBucketName, ssObjectName);
+						return;
+					}
+					try
+					{
+						storageClient.DeleteObject(ssBucketName, ssObjectName, new DeleteObjectOptions { IfGenerationMatch = generation });
+						return;
+					}
+					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+					{
+						// It existed a moment ago: a retried attempt or a concurrent call already deleted it.
+						return;
+					}
+					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && attempt < MaxAttempts)
+					{
+						// Replaced after the read: read the new generation and try again.
+					}
+					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+					{
+						throw new Exception("The object '" + ssBucketName + "/" + ssObjectName + "' was replaced by other requests on each of " + MaxAttempts + " attempts to delete it, so it was not deleted. Retry the delete.", e);
+					}
+				}
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName); }
 		} // MssObject_Delete
@@ -1512,9 +1764,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				storageClient.GetObject(ssBucketName, ssObjectName);
 				ssExists = true;
 			}
-			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && !IsBucketNotFound(e))
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && !IsMissingBucket(storageClient, e, ssBucketName, ssObjectName))
 			{
 				ssExists = false;
+			}
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+			{
+				// The bucket is missing: say so whatever wording the 404 had.
+				string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
+				throw new Exception("Bucket '" + ssBucketName + "' does not exist (names are case-sensitive and must match exactly). Details: " + details, e);
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName); }
 		} // MssObject_Exists
@@ -1544,9 +1802,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			if (ssExpirationMinutes > 10080)
 				throw new ArgumentException("ExpirationMinutes cannot exceed 10080 minutes (7 days), the maximum validity of a Google Cloud V4 signed URL (received " + ssExpirationMinutes + ").");
 
-			var auth = FromRecord(ssAuthentication);
-			var urlSigner = GetUrlSigner(auth);
-
+			// Operation is checked before the Authentication fields, so a typo in it is reported as such
+			// even when the credentials are also misconfigured.
 			HttpMethod method;
 			switch ((ssOperation ?? "").Trim().ToUpperInvariant())
 			{
@@ -1562,6 +1819,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				default:
 					throw new ArgumentException("Invalid Operation '" + ssOperation + "'. Use 'Download', 'Upload', or 'Delete'.");
 			}
+
+			var auth = FromRecord(ssAuthentication);
+			var urlSigner = GetUrlSigner(auth);
 
 			var template = UrlSigner.RequestTemplate
 				.FromBucket(ssBucketName)
@@ -1602,23 +1862,32 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		{
 			RequireBucketName(ssBucketName, "BucketName");
 			RequireObjectName(ssObjectName, "ObjectName");
+			// ContentType becomes an HTTP header; a line break would fail deep in .NET with a FormatException.
+			if (!string.IsNullOrEmpty(ssContentType) && (ssContentType.IndexOf('\r') >= 0 || ssContentType.IndexOf('\n') >= 0))
+				throw new ArgumentException("ContentType must not contain line breaks.");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
+			var metadata = ToMetadataDictionary(ssMetadata);
+			var content = ssContent ?? new byte[0];
 
 			try
 			{
-				var gcsObject = new Google.Apis.Storage.v1.Data.Object
+				// The whole upload is repeated on a transient failure (see WithRetry): the library retries
+				// the data request but not the one that opens the upload session.
+				WithRetry(() =>
 				{
-					Bucket = ssBucketName,
-					Name = ssObjectName,
-					ContentType = string.IsNullOrEmpty(ssContentType) ? null : ssContentType,
-					Metadata = ToMetadataDictionary(ssMetadata)
-				};
-
-				using (var stream = new MemoryStream(ssContent ?? new byte[0]))
-				{
-					storageClient.UploadObject(gcsObject, stream);
-				}
+					var gcsObject = new Google.Apis.Storage.v1.Data.Object
+					{
+						Bucket = ssBucketName,
+						Name = ssObjectName,
+						ContentType = string.IsNullOrEmpty(ssContentType) ? null : ssContentType,
+						Metadata = metadata
+					};
+					using (var stream = new MemoryStream(content, false))
+					{
+						return storageClient.UploadObject(gcsObject, stream);
+					}
+				});
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, null); }
 		} // MssObject_Upload
@@ -1640,13 +1909,23 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			try
 			{
-				using (var stream = new MemoryStream())
+				// Repeated on a transient failure (see WithRetry), each time into a fresh buffer: the
+				// library has no retry setting for downloads.
+				var result = WithRetry(() =>
 				{
-					// Automatic skips the hash check when Google serves the object transcoded (e.g. Content-Encoding: gzip), where it would fail on valid data.
-					var obj = storageClient.DownloadObject(ssBucketName, ssObjectName, stream, new DownloadObjectOptions { DownloadValidationMode = DownloadValidationMode.Automatic });
-					ssContent = stream.ToArray();
-					ssContentType = obj.ContentType ?? "";
-				}
+					using (var stream = new BoundedMemoryStream(MaxDownloadBytes))
+					{
+						// Automatic skips the hash check when Google serves the object transcoded (e.g. Content-Encoding: gzip), where it would fail on valid data.
+						var obj = storageClient.DownloadObject(ssBucketName, ssObjectName, stream, new DownloadObjectOptions { DownloadValidationMode = DownloadValidationMode.Automatic });
+						return new KeyValuePair<byte[], string>(stream.ToArray(), obj.ContentType ?? "");
+					}
+				});
+				ssContent = result.Key;
+				ssContentType = result.Value;
+			}
+			catch (Exception e) when (FindInChain<DownloadTooLargeException>(e) != null)
+			{
+				throw new Exception("Object '" + ssObjectName + "' in bucket '" + ssBucketName + "' is larger than the about 2 GB that Object_Download can return in one Binary Data value; retrying will not help. Use Object_GetSignedUrl with Operation 'Download' and let the client download it directly.", e);
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName); }
 		} // MssObject_Download
