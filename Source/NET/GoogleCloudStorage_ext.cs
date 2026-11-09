@@ -69,16 +69,16 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					patch.Metadata = metadata;
 				}
 
-				bool resent = false;
+				var resent = new System.Runtime.CompilerServices.StrongBox<bool>();
 				try
 				{
 					// Setting any precondition turns off the SDK's automatic ones, so both are explicit: the
 					// generation guards against a content replacement (which resets metageneration to 1).
-					SendGuarded(() => storageClient.PatchObject(patch, new PatchObjectOptions { IfGenerationMatch = current.Generation, IfMetagenerationMatch = current.Metageneration, RetryOptions = RetryOptions.Never }), ref resent);
+					SendGuarded(() => storageClient.PatchObject(patch, new PatchObjectOptions { IfGenerationMatch = current.Generation, IfMetagenerationMatch = current.Metageneration, RetryOptions = RetryOptions.Never }), resent);
 				}
 				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 				{
-					if (resent)
+					if (resent.Value)
 						throw new Exception("The metadata update of '" + SafeName(ssBucketName) + "/" + SafeName(ssObjectName) + "' may already have been applied, but Google reported a conflicting change when the request was repeated after a network error. Read the object's metadata before retrying.", e);
 					throw new Exception("The metadata of '" + SafeName(ssBucketName) + "/" + SafeName(ssObjectName) + "' was changed by another request during this update, so nothing was changed. Retry the update.", e);
 				}
@@ -243,17 +243,17 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			// Move is copy-then-delete and is not atomic: if the delete fails, both objects exist.
 			// Surface that state explicitly instead of a generic error. The delete is guarded by the
 			// generation read before the copy, so an overwritten source (newer data) is left alone.
-			bool resent = false;
+			var resent = new System.Runtime.CompilerServices.StrongBox<bool>();
 			try
 			{
 				SendGuarded(() => storageClient.DeleteObject(ssSourceBucketName, ssSourceObjectName,
-					new DeleteObjectOptions { IfGenerationMatch = generation, RetryOptions = RetryOptions.Never }), ref resent);
+					new DeleteObjectOptions { IfGenerationMatch = generation, RetryOptions = RetryOptions.Never }), resent);
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 			{
 				// Already gone (deleted concurrently) - the move's end state is reached.
 			}
-			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && resent)
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && resent.Value)
 			{
 				// The source generation was deleted by an earlier send whose response was lost.
 			}
@@ -332,11 +332,14 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// resend it means an earlier send was probably applied and its response lost, not that someone
 		/// else changed the object first.
 		/// </summary>
-		private static void SendGuarded(Action send, ref bool resent)
+		/// <remarks>
+		/// resent is set at the moment of the resend, not in a finally block: the callers read it in exception
+		/// filters, which run before any finally block of the throwing call.
+		/// </remarks>
+		private static void SendGuarded(Action send, System.Runtime.CompilerServices.StrongBox<bool> resent)
 		{
 			int sends = 0;
-			try { WithRetry(() => { sends++; send(); return 0; }); }
-			finally { resent = sends > 1; }
+			WithRetry(() => { if (sends++ > 0) resent.Value = true; send(); return 0; });
 		}
 
 		/// <summary>The largest object Object_Download can return: the most a .NET byte array holds (~2 GB). Settable only for tests.</summary>
@@ -1767,10 +1770,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 						storageClient.DeleteObject(ssBucketName, ssObjectName);
 						return;
 					}
-					bool resent = false;
+					var resent = new System.Runtime.CompilerServices.StrongBox<bool>();
 					try
 					{
-						SendGuarded(() => storageClient.DeleteObject(ssBucketName, ssObjectName, new DeleteObjectOptions { IfGenerationMatch = generation, RetryOptions = RetryOptions.Never }), ref resent);
+						SendGuarded(() => storageClient.DeleteObject(ssBucketName, ssObjectName, new DeleteObjectOptions { IfGenerationMatch = generation, RetryOptions = RetryOptions.Never }), resent);
 						return;
 					}
 					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
@@ -1778,7 +1781,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 						// It existed a moment ago: a retried attempt or a concurrent call already deleted it.
 						return;
 					}
-					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && resent)
+					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && resent.Value)
 					{
 						// A prior send may have deleted this generation before its response was lost. Do not
 						// re-read, since that could delete a newer generation.
