@@ -252,7 +252,7 @@ The action lists every matching object first, then deletes them one at a time. A
 #### `Object_Delete`
 Deletes an object. Deleting an object that doesn't exist raises an "Object ... was not found" error.
 
-The action reads the object's generation first and deletes that generation, so transient Google errors are retried (one extra request per call, using `storage.objects.get`). If another request replaces the object in between, the new generation is read and the delete repeated, up to 3 times. With a role that can delete but not read objects, the object is deleted without the read and without retries.
+The action reads the object's generation first and deletes that generation, so transient Google errors are retried (one extra request per call, using `storage.objects.get`). If another request replaces the object in between, the new generation is read and the delete repeated, up to 3 times. With a role that can delete but not read objects, the object is deleted without the read and without retries. If a repeated request (after a network error) finds the generation no longer current, the earlier request is taken to have deleted it, and a newer object written in the meantime is left in place.
 
 Whether the data can be recovered depends on the bucket: with Object Versioning on, the deleted object is kept as a noncurrent version, and with soft delete on (Google's default for new buckets, 7 days), it can be restored until the retention period ends. Only without both is the deletion permanent.
 

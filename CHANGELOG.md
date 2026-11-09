@@ -2,6 +2,25 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.7.4] - 2026-11-09
+
+Hardening release from four independent reviews of 1.7.3. No action, input or output changes: a drop-in replacement for 1.7.3.
+
+### Fixed
+
+- `Object_Delete` could delete a newer object. When Google applied the delete but its answer was lost, the Storage library repeated the request; if another writer had replaced the object in that second, the repeat got a 412 and the action read and deleted the new object too. The extension now repeats the delete itself, with the library's retry turned off, and a 412 on a repeated request counts as deleted. A 412 on the first request still means the object was replaced before the delete, which reads the new generation and deletes it, as in 1.7.3.
+- For the same reason, `Object_UpdateMetadata` said "nothing was changed" when a repeated update got a 412, although the first request may have been applied. It now says the update "may already have been applied" and asks to read the metadata before retrying. `Object_Move` no longer reports a failed source delete in that case: the source was deleted.
+- Error messages repeated caller input (object names, prefixes, `Operation`, `AuthenticationMethod`) and Google's error text as they were, so a line break or a bidirectional-override character in a name could forge or reorder lines in the OutSystems error log. Both are now cleaned the way the identity provider's text is since 1.7.3.
+- If the identity provider repeated the configured `ClientSecret` in its `error` or `error_description` (plain or URL-encoded), the secret appeared in the error message. It is now replaced by `[redacted]`.
+- The identity provider connection is shared by every app on the server and kept cookies, so cookies the provider set for one app were sent with another app's token requests. Cookies are now off for it.
+- The 30-second limit on the identity provider applied separately to the response headers and the body, so one token request could take about 60 seconds, and about 120 with the HTTP Basic retry. One 30-second deadline now covers the whole exchange.
+- The request that sends `ClientSecret` now checks the provider's certificate itself, so a server-wide "accept any certificate" setting made by another component doesn't apply to it.
+- With an emulator or a proxy that answers a plain "Not Found", `Object_Delete`, `Object_Download`, `Object_UpdateMetadata`, `Object_Move` and `Object_Copy` reported a missing bucket as a missing object. An unclear 404 is now settled by listing at most one object in the bucket, as `Object_Exists` and `Object_GetMetadata` already did.
+
+### Tests
+
+- New offline tests for each change: a log-forging name and `Operation`, a Google 404 with a bidirectional override and a line break, a secret in the identity provider's error (plain and URL-encoded), the production identity provider handler's settings, one deadline across both client authentication attempts, a repeated delete answered with 412 (no re-read, no second generation deleted), three 503s on a delete (exactly 3 requests), the two `Object_UpdateMetadata` 412 messages, a repeated `Object_Move` delete, and an unclear 404 settled by the listing either way.
+
 ## [1.7.3] - 2026-11-03
 
 Reliability and hardening release from two independent reviews of 1.7.2 (this repository's and the ODC connector's). No action, input or output changes: a drop-in replacement for 1.7.2.

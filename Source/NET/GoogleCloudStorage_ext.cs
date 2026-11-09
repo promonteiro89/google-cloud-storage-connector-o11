@@ -69,18 +69,21 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					patch.Metadata = metadata;
 				}
 
+				bool resent = false;
 				try
 				{
 					// Setting any precondition turns off the SDK's automatic ones, so both are explicit: the
 					// generation guards against a content replacement (which resets metageneration to 1).
-					storageClient.PatchObject(patch, new PatchObjectOptions { IfGenerationMatch = current.Generation, IfMetagenerationMatch = current.Metageneration });
+					SendGuarded(() => storageClient.PatchObject(patch, new PatchObjectOptions { IfGenerationMatch = current.Generation, IfMetagenerationMatch = current.Metageneration, RetryOptions = RetryOptions.Never }), ref resent);
 				}
 				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 				{
-					throw new Exception("The metadata of '" + ssBucketName + "/" + ssObjectName + "' was changed by another request during this update, so nothing was changed. Retry the update.", e);
+					if (resent)
+						throw new Exception("The metadata update of '" + SafeName(ssBucketName) + "/" + SafeName(ssObjectName) + "' may already have been applied, but Google reported a conflicting change when the request was repeated after a network error. Read the object's metadata before retrying.", e);
+					throw new Exception("The metadata of '" + SafeName(ssBucketName) + "/" + SafeName(ssObjectName) + "' was changed by another request during this update, so nothing was changed. Retry the update.", e);
 				}
 			}
-			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName); }
+			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName, storageClient); }
 		} // MssObject_UpdateMetadata
 
 		/// <summary>
@@ -132,7 +135,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				{
 					// TranslateException gives the same message a whole-object call would give, so the
 					// partial-progress error carries an actionable cause instead of Google's raw text.
-					throw new Exception("Deleted " + deleted + " of " + objects.Count + " objects under prefix '" + ssPrefix + "', then failed on '" + name + "': " + TranslateException(e, auth, ssBucketName, name).Message, e);
+					throw new Exception("Deleted " + deleted + " of " + objects.Count + " objects under prefix '" + SafeName(ssPrefix) + "', then failed on '" + SafeName(name) + "': " + TranslateException(e, auth, ssBucketName, name, storageClient).Message, e);
 				}
 			}
 
@@ -188,7 +191,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				throw CopyNotFoundException(storageClient, e, auth, ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName);
 			}
-			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName); }
+			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName, storageClient); }
 		} // MssObject_Copy
 
 		/// <summary>
@@ -207,7 +210,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			// Copying an object onto itself and then deleting the source would destroy the only copy.
 			if (string.Equals(ssSourceBucketName, ssDestinationBucketName, StringComparison.Ordinal)
 				&& string.Equals(ssSourceObjectName, ssDestinationObjectName, StringComparison.Ordinal))
-				throw new ArgumentException("Source and destination are the same object ('" + ssSourceBucketName + "/" + ssSourceObjectName + "'); Object_Move would delete it. Use a different destination name.");
+				throw new ArgumentException("Source and destination are the same object ('" + SafeName(ssSourceBucketName) + "/" + SafeName(ssSourceObjectName) + "'); Object_Move would delete it. Use a different destination name.");
 
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
@@ -220,7 +223,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				generation = storageClient.GetObject(ssSourceBucketName, ssSourceObjectName).Generation;
 			}
-			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName); }
+			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName, storageClient); }
 
 			try
 			{
@@ -229,33 +232,38 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 			{
-				throw new Exception("The source object '" + ssSourceBucketName + "/" + ssSourceObjectName + "' changed while it was being moved; nothing was moved. Retry the move.", e);
+				throw new Exception("The source object '" + SafeName(ssSourceBucketName) + "/" + SafeName(ssSourceObjectName) + "' changed while it was being moved; nothing was moved. Retry the move.", e);
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 			{
 				throw CopyNotFoundException(storageClient, e, auth, ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName);
 			}
-			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName); }
+			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName, storageClient); }
 
 			// Move is copy-then-delete and is not atomic: if the delete fails, both objects exist.
 			// Surface that state explicitly instead of a generic error. The delete is guarded by the
 			// generation read before the copy, so an overwritten source (newer data) is left alone.
+			bool resent = false;
 			try
 			{
-				storageClient.DeleteObject(ssSourceBucketName, ssSourceObjectName,
-					new DeleteObjectOptions { IfGenerationMatch = generation });
+				SendGuarded(() => storageClient.DeleteObject(ssSourceBucketName, ssSourceObjectName,
+					new DeleteObjectOptions { IfGenerationMatch = generation, RetryOptions = RetryOptions.Never }), ref resent);
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 			{
 				// Already gone (deleted concurrently) - the move's end state is reached.
 			}
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && resent)
+			{
+				// The source generation was deleted by an earlier send whose response was lost.
+			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 			{
-				throw new Exception("The object was copied to '" + ssDestinationBucketName + "/" + ssDestinationObjectName + "' (generation " + generation + "), but the source '" + ssSourceBucketName + "/" + ssSourceObjectName + "' was modified during the move and was not deleted - both objects exist and the source holds newer data.", e);
+				throw new Exception("The object was copied to '" + SafeName(ssDestinationBucketName) + "/" + SafeName(ssDestinationObjectName) + "' (generation " + generation + "), but the source '" + SafeName(ssSourceBucketName) + "/" + SafeName(ssSourceObjectName) + "' was modified during the move and was not deleted - both objects exist and the source holds newer data.", e);
 			}
 			catch (Exception e) when (IsTranslatable(e))
 			{
-				throw new Exception("The object was copied to '" + ssDestinationBucketName + "/" + ssDestinationObjectName + "' but the source '" + ssSourceBucketName + "/" + ssSourceObjectName + "' could not be deleted - both objects currently exist. Cause: " + TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName).Message, e);
+				throw new Exception("The object was copied to '" + SafeName(ssDestinationBucketName) + "/" + SafeName(ssDestinationObjectName) + "' but the source '" + SafeName(ssSourceBucketName) + "/" + SafeName(ssSourceObjectName) + "' could not be deleted - both objects currently exist. Cause: " + TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName, storageClient).Message, e);
 			}
 		} // MssObject_Move
 
@@ -315,6 +323,20 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					if (sleep != null) sleep(delay); else Thread.Sleep(delay);
 				}
 			}
+		}
+
+		/// <summary>
+		/// Sends a write that carries a generation precondition, with the library's own retry turned off
+		/// (RetryOptions.Never), and repeats it here on a transient failure, as WithRetry does. resent becomes
+		/// true once the request was sent more than once, so the caller can read a 412 correctly: after a
+		/// resend it means an earlier send was probably applied and its response lost, not that someone
+		/// else changed the object first.
+		/// </summary>
+		private static void SendGuarded(Action send, ref bool resent)
+		{
+			int sends = 0;
+			try { WithRetry(() => { sends++; send(); return 0; }); }
+			finally { resent = sends > 1; }
 		}
 
 		/// <summary>The largest object Object_Download can return: the most a .NET byte array holds (~2 GB). Settable only for tests.</summary>
@@ -405,13 +427,13 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			catch (Google.GoogleApiException probe) when (probe.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 			{
 				// The probe's own 404 says whether the source bucket or the source object is missing.
-				return FriendlyException(probe, auth, sourceBucketName, sourceObjectName);
+				return FriendlyException(probe, auth, sourceBucketName, sourceObjectName, storageClient);
 			}
 			catch (Exception probe) when (IsTranslatable(probe))
 			{
 				string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
-				return new Exception("The source object '" + sourceBucketName + "/" + sourceObjectName + "' or the destination bucket '" + destinationBucketName
-					+ "' does not exist, and checking which one failed: " + TranslateException(probe, auth, sourceBucketName, sourceObjectName).Message + " Details: " + details, e);
+				return new Exception("The source object '" + SafeName(sourceBucketName) + "/" + SafeName(sourceObjectName) + "' or the destination bucket '" + SafeName(destinationBucketName)
+					+ "' does not exist, and checking which one failed: " + TranslateException(probe, auth, sourceBucketName, sourceObjectName, storageClient).Message + " Details: " + SafeDetail(details), e);
 			}
 			return FriendlyException(e, auth, destinationBucketName, null);
 		}
@@ -475,9 +497,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				// The bucket is missing: say so whatever wording the 404 had.
 				string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
-				throw new Exception("Bucket '" + ssBucketName + "' does not exist (names are case-sensitive and must match exactly). Details: " + details, e);
+				throw new Exception("Bucket '" + SafeName(ssBucketName) + "' does not exist (names are case-sensitive and must match exactly). Details: " + SafeDetail(details), e);
 			}
-			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName); }
+			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName, storageClient); }
 		} // MssObject_GetMetadata
 		// ---- Authentication --------------------------------------------------------------
 		// WorkloadIdentityFederation: IdP JWT (client credentials or SubjectToken) -> Google STS ->
@@ -558,9 +580,14 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		private static readonly ExpiringCache<ServiceAccountCredential> ServiceAccountCredentialCache = new ExpiringCache<ServiceAccountCredential>();
 
 		// Production identity-provider client: no redirect following (a 3xx would leak the client
-		// secret to the redirect target and silently swap the token endpoint), 30 s timeout.
+		// secret to the redirect target and silently swap the token endpoint), no cookies, so state set
+		// by the provider for one caller is never sent with another caller's request, and the per-handler
+		// certificate check takes priority over a process-wide ServicePointManager.ServerCertificateValidationCallback
+		// another component may have set to accept everything. 30 s timeout.
 		private static readonly Lazy<HttpClient> IdentityProviderHttp = new Lazy<HttpClient>(() =>
-			new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) });
+			new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => errors == System.Net.Security.SslPolicyErrors.None }) { Timeout = TimeSpan.FromSeconds(30) });
+		/// <summary>Settable only for tests.</summary>
+		internal static TimeSpan IdentityProviderTimeout = TimeSpan.FromSeconds(30);
 
 		/// <summary>
 		/// A bounded cache with a sliding lifetime: an entry is dropped after 60 minutes without a hit, or
@@ -713,7 +740,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			else if (method.Equals(MethodWorkloadIdentityFederation, StringComparison.OrdinalIgnoreCase))
 				resolved = AuthMethod.WorkloadIdentityFederation;
 			else
-				throw new ArgumentException("Invalid AuthenticationMethod '" + a.AuthenticationMethod + "'. Use '" + MethodWorkloadIdentityFederation + "' or '" + MethodServiceAccountKey + "' (or leave it empty for " + MethodServiceAccountKey + ").");
+				throw new ArgumentException("Invalid AuthenticationMethod '" + SafeName(a.AuthenticationMethod) + "'. Use '" + MethodWorkloadIdentityFederation + "' or '" + MethodServiceAccountKey + "' (or leave it empty for " + MethodServiceAccountKey + ").");
 
 			var missing = new List<string>();
 			if (resolved == AuthMethod.ServiceAccountKey)
@@ -770,7 +797,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				&& p.IndexOf("/workloadIdentityPools/", StringComparison.Ordinal) >= 0
 				&& p.IndexOf("/providers/", StringComparison.Ordinal) >= 0;
 			if (!valid)
-				throw new ArgumentException("WorkloadIdentityProvider '" + provider + "' is not a workload identity provider resource name. Expected '//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID'.");
+				throw new ArgumentException("WorkloadIdentityProvider '" + SafeName(provider) + "' is not a workload identity provider resource name. Expected '//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID'.");
 			return p;
 		}
 
@@ -808,7 +835,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				&& (uri.Scheme == Uri.UriSchemeHttps
 					|| (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback && HttpClientFactoryOverride != null));
 			if (!ok)
-				throw new ArgumentException("TokenEndpoint " + display + " must be an absolute https:// URL (for example 'https://login.microsoftonline.com/TENANT_ID/oauth2/v2.0/token').");
+				throw new ArgumentException("TokenEndpoint " + SafeName(display) + " must be an absolute https:// URL (for example 'https://login.microsoftonline.com/TENANT_ID/oauth2/v2.0/token').");
 		}
 
 		/// <summary>
@@ -1158,7 +1185,11 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					http = IdentityProviderHttp.Value;
 
 				// client_secret_post first (Entra ID, Auth0, Keycloak); if the provider rejects the client,
-				// retry once with HTTP Basic client authentication (Okta's default).
+				// retry once with HTTP Basic client authentication (Okta's default). One deadline covers
+				// both attempts and response bodies.
+				using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct))
+				{
+					deadline.CancelAfter(IdentityProviderTimeout);
 				for (int attempt = 0; ; attempt++)
 				{
 					bool basic = _useBasicClientAuth || attempt > 0;
@@ -1183,7 +1214,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 						try
 						{
 							// Headers only: the body is read below with a size limit.
-							response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+							response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
 						}
 						catch (Exception e) when (e is HttpRequestException || e is TaskCanceledException)
 						{
@@ -1191,13 +1222,13 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							if (ct.IsCancellationRequested)
 								throw;
 							if (e is TaskCanceledException)
-								throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(_tokenEndpoint) + "' did not respond within 30 seconds.", e);
-							throw new IdentityProviderException("Could not reach the identity provider token endpoint '" + EndpointForDisplay(_tokenEndpoint) + "': " + e.Message, e);
+								throw new IdentityProviderException("The identity provider token endpoint '" + SafeDetail(EndpointForDisplay(_tokenEndpoint)) + "' did not respond within " + (int)IdentityProviderTimeout.TotalSeconds + " seconds.", e);
+								throw new IdentityProviderException("Could not reach the identity provider token endpoint '" + SafeDetail(EndpointForDisplay(_tokenEndpoint)) + "': " + SafeDetail(e.Message), e);
 						}
 
 						using (response)
 						{
-							string body = await ReadIdentityProviderBodyAsync(response, _tokenEndpoint, ct).ConfigureAwait(false);
+							string body = await ReadIdentityProviderBodyAsync(response, _tokenEndpoint, deadline.Token, ct).ConfigureAwait(false);
 
 							// The production client follows no redirects (and the test one does not need to):
 							// a 3xx means TokenEndpoint points at a redirecting URL.
@@ -1234,8 +1265,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							{
 								// Both fields come from the identity provider: bound their length and drop control
 								// characters, so they cannot flood or forge lines in the OutSystems error log.
-								error = CleanForMessage(error, 100);
-								description = CleanForMessage(description, 300);
+								error = CleanForMessage(RedactSecret(error, _clientSecret), 100);
+								description = CleanForMessage(RedactSecret(description, _clientSecret), 300);
 								detail = error == null && description == null
 									? "(the response body contained no 'error' or 'error_description')"
 									: error == null ? description : description == null ? error : error + ": " + description;
@@ -1243,7 +1274,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							else
 							{
 								detail = "(non-JSON response, " + Encoding.UTF8.GetByteCount(body) + " bytes, Content-Type "
-									+ (response.Content.Headers.ContentType != null ? response.Content.Headers.ContentType.ToString() : "none") + ")";
+									+ SafeDetail(response.Content.Headers.ContentType != null ? response.Content.Headers.ContentType.ToString() : "none") + ")";
 							}
 
 							bool invalidClient = response.StatusCode == HttpStatusCode.Unauthorized || error == "invalid_client";
@@ -1254,6 +1285,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 						}
 					}
 				}
+				}
 			}
 
 			/// <summary>Largest identity provider response read; a token response is a few kilobytes.</summary>
@@ -1261,20 +1293,17 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			/// <summary>
 			/// Reads the token endpoint's response body as UTF-8, failing beyond 1 MB instead of buffering
-			/// whatever the endpoint sends, and within 30 seconds (HttpClient's timeout stops at the headers).
+			/// whatever the endpoint sends, using the shared identity provider exchange deadline.
 			/// </summary>
-			private static async Task<string> ReadIdentityProviderBodyAsync(HttpResponseMessage response, string tokenEndpoint, CancellationToken ct)
+			private static async Task<string> ReadIdentityProviderBodyAsync(HttpResponseMessage response, string tokenEndpoint, CancellationToken deadlineToken, CancellationToken callerToken)
 			{
-				ct.ThrowIfCancellationRequested();
 				long? declared = response.Content.Headers.ContentLength;
 				if (declared.HasValue && declared.Value > MaxIdentityProviderResponseBytes)
-					throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(tokenEndpoint) + "' sent a response larger than 1 MB; a token response is a few kilobytes. Check TokenEndpoint.");
+					throw new IdentityProviderException("The identity provider token endpoint '" + SafeDetail(EndpointForDisplay(tokenEndpoint)) + "' sent a response larger than 1 MB; a token response is a few kilobytes. Check TokenEndpoint.");
 
-				using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
 				{
-					timeout.CancelAfter(TimeSpan.FromSeconds(30));
 					// Disposing the response unblocks a read that ignores the token.
-					using (timeout.Token.Register(() => response.Dispose()))
+					using (deadlineToken.Register(() => response.Dispose()))
 					{
 						try
 						{
@@ -1283,10 +1312,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							{
 								var chunk = new byte[16384];
 								int read;
-								while ((read = await stream.ReadAsync(chunk, 0, chunk.Length, timeout.Token).ConfigureAwait(false)) > 0)
+								while ((read = await stream.ReadAsync(chunk, 0, chunk.Length, deadlineToken).ConfigureAwait(false)) > 0)
 								{
 									if (buffer.Length + read > MaxIdentityProviderResponseBytes)
-										throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(tokenEndpoint) + "' sent a response larger than 1 MB; a token response is a few kilobytes. Check TokenEndpoint.");
+										throw new IdentityProviderException("The identity provider token endpoint '" + SafeDetail(EndpointForDisplay(tokenEndpoint)) + "' sent a response larger than 1 MB; a token response is a few kilobytes. Check TokenEndpoint.");
 									buffer.Write(chunk, 0, read);
 								}
 								// Like ReadAsStringAsync: the charset from Content-Type (UTF-8 when absent or unknown),
@@ -1303,9 +1332,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 									return reader.ReadToEnd();
 							}
 						}
-						catch (Exception e) when (!(e is IdentityProviderException) && !ct.IsCancellationRequested && timeout.IsCancellationRequested)
+						catch (Exception e) when (!(e is IdentityProviderException) && !callerToken.IsCancellationRequested && deadlineToken.IsCancellationRequested)
 						{
-							throw new IdentityProviderException("The identity provider token endpoint '" + EndpointForDisplay(tokenEndpoint) + "' did not finish sending its response within 30 seconds.", e);
+							throw new IdentityProviderException("The identity provider token endpoint '" + SafeDetail(EndpointForDisplay(tokenEndpoint)) + "' did not finish sending its response within " + (int)IdentityProviderTimeout.TotalSeconds + " seconds.", e);
 						}
 					}
 				}
@@ -1347,6 +1376,16 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				return true;
 			}
 
+			private static string RedactSecret(string text, string secret)
+			{
+				if (text == null) return null;
+				if (string.IsNullOrEmpty(secret)) return text;
+				string[] forms = { secret, Uri.EscapeDataString(secret), WebUtility.UrlEncode(secret) };
+				foreach (string form in forms)
+					if (!string.IsNullOrEmpty(form)) text = text.Replace(form, "[redacted]");
+				return text;
+			}
+
 			private static bool LooksLikeJwt(string token)
 			{
 				var parts = token.Split('.');
@@ -1369,7 +1408,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		private static string UnauthenticatedHint(AuthConfig a)
 		{
 			return ResolveAuthMethodSafe(a) == AuthMethod.WorkloadIdentityFederation
-				? "Check the Workload Identity Federation setup (provider, attribute condition) and that the federated identity has 'Workload Identity User' on '" + a.ServiceAccountEmail + "'."
+				? "Check the Workload Identity Federation setup (provider, attribute condition) and that the federated identity has 'Workload Identity User' on '" + SafeName(a.ServiceAccountEmail) + "'."
 				: "Check that ClientEmail and PrivateKey belong to the same service account and that the key has not been revoked.";
 		}
 
@@ -1380,9 +1419,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		private static Exception FriendlyAuthException(TokenResponseException e, AuthConfig a)
 		{
 			if (ResolveAuthMethodSafe(a) == AuthMethod.WorkloadIdentityFederation)
-				return new Exception("Workload Identity Federation failed for service account '" + a.ServiceAccountEmail + "': Google rejected the token exchange or impersonation. Common causes: a wrong WorkloadIdentityProvider value, a token whose issuer or audience does not match the provider, a token rejected by the attribute condition, or a federated identity without 'Workload Identity User' on the service account. Details: " + e.Message, e);
+				return new Exception("Workload Identity Federation failed for service account '" + SafeName(a.ServiceAccountEmail) + "': Google rejected the token exchange or impersonation. Common causes: a wrong WorkloadIdentityProvider value, a token whose issuer or audience does not match the provider, a token rejected by the attribute condition, or a federated identity without 'Workload Identity User' on the service account. Details: " + SafeDetail(e.Message), e);
 
-			return new Exception("Google rejected the service account credentials for '" + a.ClientEmail + "' (ClientEmail/PrivateKey mismatch, deleted service account, revoked key, or server clock skew). Details: " + e.Message, e);
+			return new Exception("Google rejected the service account credentials for '" + SafeName(a.ClientEmail) + "' (ClientEmail/PrivateKey mismatch, deleted service account, revoked key, or server clock skew). Details: " + SafeDetail(e.Message), e);
 		}
 
 		/// <summary>
@@ -1396,13 +1435,13 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				var api = e as Google.GoogleApiException;
 				if (api == null)
-					return new Exception("Signing the URL failed for service account '" + a.ServiceAccountEmail + "': " + InnermostMessage(e), e);
+					return new Exception("Signing the URL failed for service account '" + SafeName(a.ServiceAccountEmail) + "': " + SafeDetail(InnermostMessage(e)), e);
 				if (api.HttpStatusCode == System.Net.HttpStatusCode.Forbidden)
-					return new Exception("Signing the URL failed: service account '" + a.ServiceAccountEmail + "' could not sign through the IAM Credentials API. Grant the federated identity 'Service Account Token Creator' on the service account. Details: " + (api.Error != null && !string.IsNullOrEmpty(api.Error.Message) ? api.Error.Message : api.Message), e);
+					return new Exception("Signing the URL failed: service account '" + SafeName(a.ServiceAccountEmail) + "' could not sign through the IAM Credentials API. Grant the federated identity 'Service Account Token Creator' on the service account. Details: " + SafeDetail(api.Error != null && !string.IsNullOrEmpty(api.Error.Message) ? api.Error.Message : api.Message), e);
 				string details = api.Error != null && !string.IsNullOrEmpty(api.Error.Message) ? api.Error.Message : api.Message;
-				return new Exception("Signing the URL failed for service account '" + a.ServiceAccountEmail + "' (" + (int)api.HttpStatusCode + "): " + details, e);
+				return new Exception("Signing the URL failed for service account '" + SafeName(a.ServiceAccountEmail) + "' (" + (int)api.HttpStatusCode + "): " + SafeDetail(details), e);
 			}
-			return new Exception("Signing the URL failed for service account '" + a.ClientEmail + "'. Details: " + e.Message, e);
+			return new Exception("Signing the URL failed for service account '" + SafeName(a.ClientEmail) + "'. Details: " + SafeDetail(e.Message), e);
 		}
 
 		/// <summary>
@@ -1501,6 +1540,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			return sb.ToString();
 		}
 
+		/// <summary>A caller-supplied name, prefix or value, made safe to put in an error message.</summary>
+		internal static string SafeName(string value) { return CleanForMessage(value, 1024); }
+
+		/// <summary>Error text from Google, the SDK or the network, made safe to put in an error message.</summary>
+		internal static string SafeDetail(string value) { return CleanForMessage(value, 1000); }
+
 		/// <summary>Ends a message fragment with a period unless it already ends a sentence.</summary>
 		private static string EndSentence(string text)
 		{
@@ -1516,10 +1561,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// actionable message), and adds clear messages for network and timeout failures. The original
 		/// exception is kept as the InnerException.
 		/// </summary>
-		private static Exception TranslateException(Exception e, AuthConfig a, string bucketName, string objectName)
+		private static Exception TranslateException(Exception e, AuthConfig a, string bucketName, string objectName, StorageClient storageClient = null)
 		{
 			var api = e as Google.GoogleApiException;
-			if (api != null) return FriendlyException(api, a, bucketName, objectName);
+			if (api != null) return FriendlyException(api, a, bucketName, objectName, storageClient);
 
 			var token = e as TokenResponseException;
 			if (token != null) return FriendlyAuthException(token, a);
@@ -1531,23 +1576,23 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				// IdentityProviderException behind a generic message; unwrap it when present.
 				var identityProvider = FindInChain<IdentityProviderException>(e);
 				if (identityProvider != null)
-					return new Exception(identityProvider.Message, e);
-				return new Exception("Workload Identity Federation could not obtain the identity provider token: " + InnermostMessage(e), e);
+					return new Exception(SafeDetail(identityProvider.Message), e);
+				return new Exception("Workload Identity Federation could not obtain the identity provider token: " + SafeDetail(InnermostMessage(e)), e);
 			}
 
 			if (e is IdentityProviderException)
-				return new Exception(e.Message, e);
+				return new Exception(SafeDetail(e.Message), e);
 
 			if (e is HttpRequestException)
-				return new Exception("Could not reach Google Cloud: " + EndSentence(InnermostMessage(e)) + " Check the server's outbound HTTPS access to *.googleapis.com.", e);
+				return new Exception("Could not reach Google Cloud: " + EndSentence(SafeDetail(InnermostMessage(e))) + " Check the server's outbound HTTPS access to *.googleapis.com.", e);
 
 			// The Storage library reports a downloaded hash mismatch as a plain IOException.
 			var io = e as IOException;
 			if (io != null)
 			{
 				if (io.Message.StartsWith("Incorrect hash", StringComparison.Ordinal))
-					return new Exception("The downloaded data did not match the object's checksum, so no content was returned. This is usually a transient network error - retry the download. Details: " + io.Message, e);
-				return new Exception("The connection to Google Cloud was interrupted: " + EndSentence(InnermostMessage(e)) + " Retry the request.", e);
+					return new Exception("The downloaded data did not match the object's checksum, so no content was returned. This is usually a transient network error - retry the download. Details: " + SafeDetail(io.Message), e);
+				return new Exception("The connection to Google Cloud was interrupted: " + EndSentence(SafeDetail(InnermostMessage(e))) + " Retry the request.", e);
 			}
 
 			// TaskCanceledException without caller cancellation: the request timed out.
@@ -1578,32 +1623,32 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// OutSystems logs, instead of Google's raw API error. The original exception is kept
 		/// as InnerException.
 		/// </summary>
-		private static Exception FriendlyException(Google.GoogleApiException e, AuthConfig a, string bucketName, string objectName)
+		private static Exception FriendlyException(Google.GoogleApiException e, AuthConfig a, string bucketName, string objectName, StorageClient storageClient = null)
 		{
 			string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
 
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && bucketName != null)
 			{
-				if (objectName != null && !IsBucketNotFound(e))
-					return new Exception("Object '" + objectName + "' was not found in bucket '" + bucketName + "'. Details: " + details, e);
-				return new Exception("Bucket '" + bucketName + "' does not exist (names are case-sensitive and must match exactly). Details: " + details, e);
+				if (objectName != null && (storageClient != null ? !IsMissingBucket(storageClient, e, bucketName, objectName) : !IsBucketNotFound(e)))
+					return new Exception("Object '" + SafeName(objectName) + "' was not found in bucket '" + SafeName(bucketName) + "'. Details: " + SafeDetail(details), e);
+				return new Exception("Bucket '" + SafeName(bucketName) + "' does not exist (names are case-sensitive and must match exactly). Details: " + SafeDetail(details), e);
 			}
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.Forbidden)
-				return new Exception("Access denied for service account '" + IdentityOf(a) + "'. Grant it the required IAM role in Google Cloud (Storage Object Admin for object operations, Storage Admin for bucket operations). Details: " + details, e);
+				return new Exception("Access denied for service account '" + SafeName(IdentityOf(a)) + "'. Grant it the required IAM role in Google Cloud (Storage Object Admin for object operations, Storage Admin for bucket operations). Details: " + SafeDetail(details), e);
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.Unauthorized)
-				return new Exception("Google rejected the request as unauthenticated. " + UnauthenticatedHint(a) + " Details: " + details, e);
+				return new Exception("Google rejected the request as unauthenticated. " + UnauthenticatedHint(a) + " Details: " + SafeDetail(details), e);
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.BadRequest && IsChecksumMismatch(details))
-				return new Exception("Upload rejected by Google Cloud Storage: the data it received did not match the CRC32C checksum computed by the connector, so nothing was stored and any existing object was left unchanged. This is usually a transient network error - retry the upload. Details: " + details, e);
+				return new Exception("Upload rejected by Google Cloud Storage: the data it received did not match the CRC32C checksum computed by the connector, so nothing was stored and any existing object was left unchanged. This is usually a transient network error - retry the upload. Details: " + SafeDetail(details), e);
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.Conflict)
 			{
 				if (details != null && details.IndexOf("not empty", StringComparison.OrdinalIgnoreCase) >= 0)
-					return new Exception("Bucket '" + bucketName + "' is not empty. Delete all objects in it before deleting the bucket. Details: " + details, e);
-				return new Exception("Conflict: " + details + " (for Bucket_Create this usually means the name is already taken - bucket names are global across all of Google Cloud Storage).", e);
+					return new Exception("Bucket '" + SafeName(bucketName) + "' is not empty. Delete all objects in it before deleting the bucket. Details: " + SafeDetail(details), e);
+				return new Exception("Conflict: " + SafeDetail(details) + " (for Bucket_Create this usually means the name is already taken - bucket names are global across all of Google Cloud Storage).", e);
 			}
 			// Status 0: the SDK rejected the request itself (for example "Parameter validation failed"), so nothing reached Google.
 			if ((int)e.HttpStatusCode == 0)
-				return new Exception("The request was rejected by the Google Cloud Storage client library before it was sent: " + details, e);
-			return new Exception("Google Cloud Storage error (" + (int)e.HttpStatusCode + " " + e.HttpStatusCode + "): " + details, e);
+				return new Exception("The request was rejected by the Google Cloud Storage client library before it was sent: " + SafeDetail(details), e);
+			return new Exception("Google Cloud Storage error (" + (int)e.HttpStatusCode + " " + e.HttpStatusCode + "): " + SafeDetail(details), e);
 		}
 
 		/// <summary>
@@ -1722,14 +1767,21 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 						storageClient.DeleteObject(ssBucketName, ssObjectName);
 						return;
 					}
+					bool resent = false;
 					try
 					{
-						storageClient.DeleteObject(ssBucketName, ssObjectName, new DeleteObjectOptions { IfGenerationMatch = generation });
+						SendGuarded(() => storageClient.DeleteObject(ssBucketName, ssObjectName, new DeleteObjectOptions { IfGenerationMatch = generation, RetryOptions = RetryOptions.Never }), ref resent);
 						return;
 					}
 					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 					{
 						// It existed a moment ago: a retried attempt or a concurrent call already deleted it.
+						return;
+					}
+					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && resent)
+					{
+						// A prior send may have deleted this generation before its response was lost. Do not
+						// re-read, since that could delete a newer generation.
 						return;
 					}
 					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && attempt < MaxAttempts)
@@ -1738,11 +1790,11 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					}
 					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 					{
-						throw new Exception("The object '" + ssBucketName + "/" + ssObjectName + "' was replaced by other requests on each of " + MaxAttempts + " attempts to delete it, so it was not deleted. Retry the delete.", e);
+						throw new Exception("The object '" + SafeName(ssBucketName) + "/" + SafeName(ssObjectName) + "' was replaced by other requests on each of " + MaxAttempts + " attempts to delete it, so it was not deleted. Retry the delete.", e);
 					}
 				}
 			}
-			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName); }
+			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName, storageClient); }
 		} // MssObject_Delete
 
 		/// <summary>
@@ -1772,9 +1824,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				// The bucket is missing: say so whatever wording the 404 had.
 				string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
-				throw new Exception("Bucket '" + ssBucketName + "' does not exist (names are case-sensitive and must match exactly). Details: " + details, e);
+				throw new Exception("Bucket '" + SafeName(ssBucketName) + "' does not exist (names are case-sensitive and must match exactly). Details: " + SafeDetail(details), e);
 			}
-			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName); }
+			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName, storageClient); }
 		} // MssObject_Exists
 
 		/// <summary>
@@ -1817,7 +1869,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					method = HttpMethod.Delete;
 					break;
 				default:
-					throw new ArgumentException("Invalid Operation '" + ssOperation + "'. Use 'Download', 'Upload', or 'Delete'.");
+					throw new ArgumentException("Invalid Operation '" + SafeName(ssOperation) + "'. Use 'Download', 'Upload', or 'Delete'.");
 			}
 
 			var auth = FromRecord(ssAuthentication);
@@ -1925,9 +1977,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 			catch (Exception e) when (FindInChain<DownloadTooLargeException>(e) != null)
 			{
-				throw new Exception("Object '" + ssObjectName + "' in bucket '" + ssBucketName + "' is larger than the about 2 GB that Object_Download can return in one Binary Data value; retrying will not help. Use Object_GetSignedUrl with Operation 'Download' and let the client download it directly.", e);
+				throw new Exception("Object '" + SafeName(ssObjectName) + "' in bucket '" + SafeName(ssBucketName) + "' is larger than the about 2 GB that Object_Download can return in one Binary Data value; retrying will not help. Use Object_GetSignedUrl with Operation 'Download' and let the client download it directly.", e);
 			}
-			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName); }
+			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName, storageClient); }
 		} // MssObject_Download
 
 		/// <summary>

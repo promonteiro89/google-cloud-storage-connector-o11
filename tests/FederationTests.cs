@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -64,6 +65,10 @@ public sealed class FakeFederationBackend : HttpMessageHandler
     public bool IdpHtmlError;
     /// <summary>When true, access_token in the token response is a JSON object instead of a string.</summary>
     public bool IdpTokenIsObject;
+    /// <summary>Optional raw OAuth error response, used by secret-redaction tests.</summary>
+    public string IdpErrorJson;
+    /// <summary>Optional delay before each identity-provider response; observes cancellation.</summary>
+    public int IdpDelayMilliseconds;
     /// <summary>Optional STS failure body (returned with 400).</summary>
     public string StsError;
     /// <summary>Optional signBlob failure status.</summary>
@@ -126,6 +131,7 @@ public sealed class FakeFederationBackend : HttpMessageHandler
 
         if (url.StartsWith(IdpTokenEndpoint, StringComparison.Ordinal))
         {
+            if (IdpDelayMilliseconds > 0) await Task.Delay(IdpDelayMilliseconds, cancellationToken).ConfigureAwait(false);
             bool usedBasic = auth != null && auth.StartsWith("Basic ", StringComparison.Ordinal);
             if (IdpRedirects)
             {
@@ -135,6 +141,8 @@ public sealed class FakeFederationBackend : HttpMessageHandler
             }
             if (IdpHtmlError)
                 return new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("<html><body>Invalid request: SECRET-MARKER is missing</body></html>", Encoding.UTF8, "text/html") };
+            if (IdpErrorJson != null)
+                return new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(IdpErrorJson, Encoding.UTF8, "application/json") };
             if (IdpRejectsClient || (IdpRequiresBasicAuth && !usedBasic))
                 return Json(HttpStatusCode.Unauthorized, new { error = "invalid_client", error_description = "Client authentication failed." });
             return Json(HttpStatusCode.OK, IdpTokenIsObject
@@ -323,6 +331,13 @@ public static class FederationTests
         return new CssGoogleCloudStorage_ext();
     }
 
+    private static FakeFederationBackend NewBackend()
+    {
+        _backend = new FakeFederationBackend();
+        SetFactory(new FakeHttpClientFactory(_backend));
+        return _backend;
+    }
+
     /// <summary>A unique service account per test keeps the extension's static caches from leaking between tests.</summary>
     private static string UniqueServiceAccount()
     {
@@ -407,6 +422,7 @@ public static class FederationTests
             CredentialInputs(email, pem);
             MethodSwitchAndValidation(email, pem);
             Protocol();
+            IdentityProviderHardening();
             SignedUrls();
         }
         finally
@@ -535,6 +551,72 @@ public static class FederationTests
     }
 
     // ---- protocol contract: client credentials -> STS -> impersonation -> Storage ------------
+
+    private static void IdentityProviderHardening()
+    {
+        bool exists;
+        var auth = ClientCredentials(null);
+        auth.ssSTGCS_Authentication.ssClientSecret = "fake-secret-XYZ";
+        var backend = NewBackend();
+        backend.IdpErrorJson = "{\"error\":\"invalid_request\",\"error_description\":\"bad secret fake-secret-XYZ\"}";
+        var ex = Throws(() => new CssGoogleCloudStorage_ext().MssBucket_Exists(auth, "b", out exists));
+        TestLog.Check("Identity provider errors redact raw ClientSecret",
+            ex != null && Has(ex.Message, "[redacted]") && !Has(ex.Message, "fake-secret-XYZ"), ex == null ? "no exception" : ex.Message);
+
+        auth = ClientCredentials(null);
+        auth.ssSTGCS_Authentication.ssClientSecret = "fake sec/+r";
+        string escaped = Uri.EscapeDataString("fake sec/+r");
+        backend = NewBackend();
+        backend.IdpErrorJson = "{\"error\":\"invalid_request\",\"error_description\":\"bad " + escaped + "\"}";
+        ex = Throws(() => new CssGoogleCloudStorage_ext().MssBucket_Exists(auth, "b", out exists));
+        TestLog.Check("Identity provider errors redact URL-escaped ClientSecret",
+            ex != null && Has(ex.Message, "[redacted]") && !Has(ex.Message, "fake sec/+r") && !Has(ex.Message, escaped), ex == null ? "no exception" : ex.Message);
+
+        FieldInfo clientField = Sut.GetField("IdentityProviderHttp", BindingFlags.NonPublic | BindingFlags.Static);
+        object lazy = clientField.GetValue(null);
+        object http = lazy.GetType().GetProperty("Value").GetValue(lazy, null);
+        Type invoker = http.GetType().BaseType;
+        FieldInfo handlerField = null;
+        while (invoker != null && handlerField == null)
+        {
+            handlerField = invoker.GetField("handler", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? invoker.GetField("_handler", BindingFlags.Instance | BindingFlags.NonPublic);
+            invoker = invoker.BaseType;
+        }
+        var handler = handlerField == null ? null : handlerField.GetValue(http) as HttpClientHandler;
+        bool tls = false;
+        if (handler != null && handler.ServerCertificateCustomValidationCallback != null)
+        {
+            var callback = handler.ServerCertificateCustomValidationCallback;
+            bool valid = callback(null, null, null, System.Net.Security.SslPolicyErrors.None);
+            bool mismatch = callback(null, null, null, System.Net.Security.SslPolicyErrors.RemoteCertificateNameMismatch);
+            tls = valid && !mismatch;
+        }
+        TestLog.Check("Production identity-provider handler disables cookies and redirects and validates certificates",
+            handler != null && !handler.UseCookies && !handler.AllowAutoRedirect && handler.ServerCertificateCustomValidationCallback != null && tls,
+            handler == null ? "handler reflection failed" : "cookies=" + handler.UseCookies + ", redirects=" + handler.AllowAutoRedirect + ", TLS=" + tls);
+
+        FieldInfo timeoutField = Sut.GetField("IdentityProviderTimeout", BindingFlags.NonPublic | BindingFlags.Static);
+        object oldTimeout = timeoutField.GetValue(null);
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            timeoutField.SetValue(null, TimeSpan.FromSeconds(2));
+            auth = ClientCredentials(null);
+            backend = NewBackend();
+            backend.IdpRequiresBasicAuth = true;
+            backend.IdpDelayMilliseconds = 1200;
+            ex = Throws(() => new CssGoogleCloudStorage_ext().MssBucket_Exists(auth, "b", out exists));
+        }
+        finally
+        {
+            watch.Stop();
+            timeoutField.SetValue(null, oldTimeout);
+        }
+        TestLog.Check("Identity-provider deadline spans client_secret_post and Basic fallback",
+            ex != null && Has(ex.Message, "within 2 seconds") && watch.Elapsed < TimeSpan.FromSeconds(3),
+            (ex == null ? "no exception" : ex.Message) + "; elapsed=" + watch.Elapsed.TotalMilliseconds);
+    }
 
     private static void Protocol()
     {

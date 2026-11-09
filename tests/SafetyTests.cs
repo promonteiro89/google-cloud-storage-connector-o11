@@ -35,6 +35,8 @@ public static class SafetyTests
         {
             UpdateMetadataPatchBody();
             NameGuards();
+            CallerTextSanitization();
+            GoogleTextSanitization();
             StatusZeroMessage();
             DeleteByPrefix();
             Move();
@@ -267,12 +269,37 @@ public static class SafetyTests
         Guard("Object_Exists whitespace BucketName", "BucketName", (e, a) => e.MssObject_Exists(a, "   ", "o", out exists));
     }
 
+    private static void CallerTextSanitization()
+    {
+        var backend = NewBackend(null);
+        string name = "x\r\n[ERROR] fake";
+        var ex = FederationTests.Throws(() => Ext().MssObject_Move(UploadIntegrityTests.Federated(), "b", name, "b", name));
+        int requests;
+        lock (backend.Requests) requests = backend.Requests.Count;
+        TestLog.Check("Move same object sanitizes caller object name and sends no request",
+            ex is ArgumentException && ex.Message.IndexOf('\r') < 0 && ex.Message.IndexOf('\n') < 0 && Has(ex.Message, "x  [ERROR] fake") && requests == 0,
+            ex == null ? "no exception" : ex.Message + "; requests=" + requests);
+
+        ex = FederationTests.Throws(() => { string url; Ext().MssObject_GetSignedUrl(UploadIntegrityTests.Federated(), "bad\r\nforged", "b", "o", 5, "", out url); });
+        TestLog.Check("GetSignedUrl sanitizes invalid Operation",
+            ex is ArgumentException && ex.Message.IndexOf('\r') < 0 && ex.Message.IndexOf('\n') < 0 && Has(ex.Message, "bad  forged"),
+            ex == null ? "no exception" : ex.Message);
+    }
+
+    private static void GoogleTextSanitization()
+    {
+        var backend = NewBackend(r => IsObjectRequest(r, HttpMethod.Get) ? GoogleError(404, "No such object: b/o\u202Eevil\nline") : null);
+        var ex = FederationTests.Throws(() => Ext().MssObject_Delete(UploadIntegrityTests.Federated(), "b", "o"));
+        TestLog.Check("Delete translates and sanitizes Google 404 detail",
+            ex != null && ex.Message.IndexOf('\u202E') < 0 && ex.Message.IndexOf('\n') < 0, ex == null ? "no exception" : ex.Message);
+    }
+
     // ---- 4. Status 0 ---------------------------------------------------------------------------------
 
     private static void StatusZeroMessage()
     {
         var api = new Google.GoogleApiException("storage", "Parameter validation failed for \"object\"");
-        var friendly = (Exception)Sut.GetMethod("FriendlyException", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { api, null, "b", "o" });
+        var friendly = (Exception)Sut.GetMethod("FriendlyException", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { api, null, "b", "o", null });
         TestLog.Check("A client-side rejection (HTTP status 0) says the library rejected it before it was sent",
             api.HttpStatusCode == 0 && friendly.Message.StartsWith("The request was rejected by the Google Cloud Storage client library before it was sent:", StringComparison.Ordinal)
             && !Has(friendly.Message, "(0 0)") && Has(friendly.Message, "Parameter validation failed"), friendly.Message);
