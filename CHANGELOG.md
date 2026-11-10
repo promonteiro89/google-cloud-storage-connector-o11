@@ -2,6 +2,65 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.7.5] - 2026-11-10
+
+Hardening release from five independent reviews of 1.7.4 and from the review of the ODC connector, whose findings were checked against this code. No action, input or output changes: a drop-in replacement for 1.7.4. Some invalid inputs that used to reach Google, or fail deep inside .NET, are now rejected up front (see "Input checks"), and `Object_Download` makes one extra request.
+
+### Fixed
+
+- `Object_Delete` and `Object_Move` could report success for an object that was not deleted. 1.7.4 treats a 412 on a repeated request as "the first request already deleted it". That is only true when the first request may have been applied: a lost answer, or a 500, 502, 503 or 504. After a 408 or 429 Google refused the request, so the 412 means another writer replaced the object. In that case `Object_Delete` now reads the new generation and deletes it, `Object_Move` reports that the source was modified and both objects exist, and `Object_UpdateMetadata` says "nothing was changed" instead of "may already have been applied".
+- `Bucket_Delete` and `Bucket_Create` failed when the Storage library repeated a request that Google had already applied: the repeat was answered "does not exist" or "name already taken". The extension now repeats these requests itself. A repeated delete that finds the bucket gone succeeds. A repeated create that is told the name is taken succeeds when the bucket is readable and was created after the call started (a creation time up to one minute earlier is accepted, since Google's clock and the server's can differ); otherwise it is a conflict, as before.
+- Network failures (a reset connection, DNS, TLS) were repeated only by `Object_Upload`, `Object_Download` and the guarded deletes. The Storage library repeats Google's error answers but not these, so one reset connection failed `Object_Exists`, `Object_GetMetadata`, `Object_List`, `Object_Copy`, `Bucket_Exists`, `Bucket_List`, the reads inside `Object_Delete`, `Object_Move` and `Object_UpdateMetadata`, and a whole `Object_DeleteByPrefix`. They are now repeated up to 3 times on every action. A listing of several pages repeats only the page that failed.
+- `Object_DeleteByPrefix` did not count an object whose repeated delete found it already gone, although this call had deleted it. It is now counted.
+- `Object_GetSignedUrl` with Workload Identity Federation failed on one network failure, 408 or 429 of the IAM `signBlob` request. Those are now repeated, up to 3 attempts. Google's library already repeated a 500, 502, 503 or 504 there.
+- A download whose data stopped arriving held the calling request until the platform's own timeout, because the 100-second limit covers a request only until the response headers arrive. `Object_Download` now fails with a "stalled" error when no data arrives for 60 seconds. This is not a limit on the whole download: a slow download that keeps receiving data completes.
+- A slow identity provider failed after about 12 seconds with "A task was canceled" instead of the documented 30-second limit. Google's sign-in code allows its first attempt 12 seconds and treated the cancelled request as final. The identity provider request now runs on its own 30-second deadline, and a token that arrives after Google's first attempt gave up is used by its second.
+- An assembly that could not be loaded (a `FileNotFoundException` or `FileLoadException` for a Google or `System.*` DLL) was repeated three times and reported as "The connection to Google Cloud was interrupted". Those are no longer treated as network errors, so the real cause reaches the error log.
+- A malformed bucket name (uppercase, a space, a line break) was repeated as given in a raw library error, on every action, so a line break or a bidirectional-override character in it could forge or reorder lines in the error log; a name ending in a line feed passed the library's own check and reached a signed URL. Bucket names are now checked before any request.
+- If the identity provider repeated the `ClientSecret` in exactly the form it was sent (URL-escaped, with spaces as `+`), it appeared in the error message: for a secret with a space and one of `! * ( )`, that form differs from the two masked since 1.7.4. It is now masked too, and so are the HTTP Basic credentials (the client id and secret in Base64) and a secret repeated in the `Content-Type` of a non-JSON answer.
+- If Google's token service repeated the `SubjectToken`, or the identity provider's token, in its error, the token appeared in the error message. A JWT in Google's error text is now replaced by `[token]`.
+- Google's error text was lost when the body was not JSON (a plain-text answer, a proxy page): the message said "No error message was specified", and a missing bucket could be reported as a missing object. The start of such a body is now used.
+- A successful answer that was not Google's (a proxy or sign-in page with status 200) was reported as "rejected by the Google Cloud Storage client library before it was sent". It now says that something answered in Google's place and to check outbound HTTPS access.
+- A 429 was shown as "Google Cloud Storage error (429 429)". It is now "(429 TooManyRequests)".
+- `Object_Move`'s "modified during the move" error put the source's generation after the destination's name. It now names it as the source's.
+- The connections to Google now check the server certificate themselves, as the identity provider connection does since 1.7.4, so a server-wide "accept any certificate" setting made by another component doesn't apply to them.
+- The message cleaner now also removes the direction marks U+200E, U+200F and U+061C.
+
+### Input checks
+
+- `BucketName`: only the characters Google allows (lowercase letters, digits, `-`, `_`, `.`), up to 222 characters. Before, such a name failed later with a raw error.
+- `ContentType` on `Object_Upload` and `Object_GetSignedUrl`: printable ASCII only. A non-ASCII or control character used to fail inside .NET, be repeated three times and be reported as "Could not reach Google Cloud".
+- `SubjectToken`: must look like a JWT (three base64url parts separated by dots, at most 32,768 characters). Each distinct token takes an entry in the credential caches, so arbitrary text is now rejected before anything is cached; it was rejected by Google before, after being cached.
+- `ServiceAccountEmail`: letters, digits and `@ . - _ +` only, since it becomes part of the IAM Credentials URL.
+
+### Changed
+
+- `Object_Download` reads the object's size first, which costs one extra request. An object over the 2 GB limit is refused before any content is transferred, and the memory for the content is allocated once at its final size instead of growing by doubling and then being copied. The size is only a hint (an object replaced in between still downloads correctly, and an object stored gzip-compressed is never refused by its stored size), and the content type still comes from the download itself. The read buffer of a download is 1 MB instead of the library's 10 MB.
+
+### Documentation
+
+- With Workload Identity Federation, a signed URL should not be valid for more than 12 hours: Google signs it with a key it manages and rotates. The action still accepts up to 7 days with both methods.
+- Signed URLs: the bucket's CORS configuration is needed for browser use, and an `Upload` URL doesn't limit the upload's size.
+- A Site Property is not encrypted; the advice to store secrets in an "encrypted Site Property" is corrected.
+- A download of an object stored with `Content-Encoding: gzip` is not checked against its checksum.
+- `Object_List` with `MaxResults` 0 has no limit on time or memory; the actions have no overall time limit, with the cases that can run long.
+- `Bucket_Create` uses Google's default settings (no uniform bucket-level access, no public access prevention).
+- The publish steps open the `.xif`, not the `.sln`.
+- Action descriptions in Service Studio: `Object_Delete` no longer says "permanently", `Object_GetSignedUrl` describes all three operations, its `Operation` says that it defaults to `Download` when not set (it said "Required"), and `Bucket_Exists` says that an inaccessible bucket raises an error.
+- New [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and `licenses/` for the bundled assemblies.
+
+### CI
+
+- The deploy key for the OutSystems assemblies is no longer in the environment of every step: the jobs only see whether it exists. Checkouts no longer leave their credentials on the runner.
+- The test runner checks the SHA-256 of the fake-gcs-server download before extracting it.
+
+### Tests
+
+- New offline tests ([tests/HardeningTests.cs](tests/HardeningTests.cs)) for each change above, including: a 408 or 429 followed by a 412 on `Object_Delete`, `Object_Move` and `Object_UpdateMetadata`; all 13 actions rejecting a bucket name with a line break without sending a request; a stalled download body and a slow one; an identity provider that answers after 13 seconds; one reset connection on each action; each of 408, 429, 500, 502, 503 and 504 on download and upload; 12 parallel first calls with one credential; and a key sign-in through the test seam.
+- Each fix was removed in a copy of the code to confirm that at least one test then fails.
+- Two independent reviews of this release's diff found eight further points, fixed above: the one-minute clock allowance in `Bucket_Create`, a stall timer that could act on a read that had already finished, a gzip object refused by its stored size, the HTTP Basic credentials, the `Content-Type` text and an echoed token in error messages, and two README statements. Each has a test.
+- Five emulator checks that could not fail now check the error message.
+
 ## [1.7.4] - 2026-11-09
 
 Hardening release from four independent reviews of 1.7.3. No action, input or output changes: a drop-in replacement for 1.7.3.

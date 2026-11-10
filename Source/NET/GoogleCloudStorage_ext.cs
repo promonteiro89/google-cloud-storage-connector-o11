@@ -52,7 +52,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				// guarded by both, so a concurrent change fails cleanly (412) instead of being silently
 				// overwritten. A PATCH leaves every other field alone, including per-object ACLs that a
 				// full PUT would replace.
-				var current = storageClient.GetObject(ssBucketName, ssObjectName);
+				var current = WithNetworkRetry(() => storageClient.GetObject(ssBucketName, ssObjectName));
 				var patch = new Google.Apis.Storage.v1.Data.Object { Bucket = ssBucketName, Name = ssObjectName };
 
 				if (!string.IsNullOrEmpty(ssContentType)) patch.ContentType = ssContentType;
@@ -103,14 +103,18 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var storageClient = GetStorageClient(auth);
 
 			// Materialize the names first so deletions can't interfere with listing pagination. Each
-			// object's generation is kept: deleting with it as a precondition makes the SDK retry transient
-			// errors (it never retries an unconditional delete), and leaves alone an object that was
-			// replaced after the listing.
+			// object's generation is kept: deleting with it as a precondition makes a repeat after a
+			// transient error safe (an unconditional delete is never repeated), and leaves alone an object
+			// that was replaced after the listing.
 			var objects = new List<KeyValuePair<string, long?>>();
 			try
 			{
-				foreach (var obj in storageClient.ListObjects(ssBucketName, ssPrefix))
-					objects.Add(new KeyValuePair<string, long?>(obj.Name, obj.Generation));
+				foreach (var page in ListObjectPages(storageClient, ssBucketName, ssPrefix, 0, null, null))
+				{
+					if (page.Items == null) continue;
+					foreach (var obj in page.Items)
+						objects.Add(new KeyValuePair<string, long?>(obj.Name, obj.Generation));
+				}
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, null); }
 
@@ -118,9 +122,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			foreach (var item in objects)
 			{
 				string name = item.Key;
+				var resent = new System.Runtime.CompilerServices.StrongBox<bool>();
 				try
 				{
-					storageClient.DeleteObject(ssBucketName, name, new DeleteObjectOptions { IfGenerationMatch = item.Value });
+					SendGuarded(() => storageClient.DeleteObject(ssBucketName, name, new DeleteObjectOptions { IfGenerationMatch = item.Value, RetryOptions = RetryOptions.Never }), resent);
+					deleted++;
+				}
+				catch (Google.GoogleApiException e) when (resent.Value && (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound || e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed))
+				{
+					// The listed generation was deleted by an earlier send of this request whose response was lost.
 					deleted++;
 				}
 				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
@@ -143,11 +153,11 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		} // MssObject_DeleteByPrefix
 
 		/// <summary>
-		/// Checks whether a bucket exists and is accessible to the service account, without listing its contents.
+		/// Checks whether a bucket exists, without listing its contents. Returns False only when Google reports that the bucket does not exist; a bucket that exists but that the service account cannot access raises an error.
 		/// </summary>
 		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
-		/// <param name="ssExists">True if the bucket exists and the service account can access it.</param>
+		/// <param name="ssExists">True if the bucket exists. False if Google reports that it does not exist.</param>
 		public void MssBucket_Exists(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, out bool ssExists) {
 			RequireBucketName(ssBucketName, "BucketName");
 			var auth = FromRecord(ssAuthentication);
@@ -155,7 +165,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			try
 			{
-				storageClient.GetBucket(ssBucketName);
+				WithNetworkRetry(() => storageClient.GetBucket(ssBucketName));
 				ssExists = true;
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
@@ -184,8 +194,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				// The copy overwrites the destination anyway, so retrying a transient failure adds no risk;
 				// the SDK only retries a copy with a destination precondition unless told otherwise.
-				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName,
-					new CopyObjectOptions { RetryOptions = RetryOptions.IdempotentRetryOptions });
+				WithNetworkRetry(() => storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName,
+					new CopyObjectOptions { RetryOptions = RetryOptions.IdempotentRetryOptions }));
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 			{
@@ -221,14 +231,14 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			long? generation = null;
 			try
 			{
-				generation = storageClient.GetObject(ssSourceBucketName, ssSourceObjectName).Generation;
+				generation = WithNetworkRetry(() => storageClient.GetObject(ssSourceBucketName, ssSourceObjectName)).Generation;
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssSourceBucketName, ssSourceObjectName, storageClient); }
 
 			try
 			{
-				storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName,
-					new CopyObjectOptions { IfSourceGenerationMatch = generation, RetryOptions = RetryOptions.IdempotentRetryOptions });
+				WithNetworkRetry(() => storageClient.CopyObject(ssSourceBucketName, ssSourceObjectName, ssDestinationBucketName, ssDestinationObjectName,
+					new CopyObjectOptions { IfSourceGenerationMatch = generation, RetryOptions = RetryOptions.IdempotentRetryOptions }));
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 			{
@@ -259,7 +269,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
 			{
-				throw new Exception("The object was copied to '" + SafeName(ssDestinationBucketName) + "/" + SafeName(ssDestinationObjectName) + "' (generation " + generation + "), but the source '" + SafeName(ssSourceBucketName) + "/" + SafeName(ssSourceObjectName) + "' was modified during the move and was not deleted - both objects exist and the source holds newer data.", e);
+				throw new Exception("The object was copied to '" + SafeName(ssDestinationBucketName) + "/" + SafeName(ssDestinationObjectName) + "', but the source '" + SafeName(ssSourceBucketName) + "/" + SafeName(ssSourceObjectName) + "' (generation " + generation + " when the move started) was modified during the move and was not deleted - both objects exist and the source holds newer data.", e);
 			}
 			catch (Exception e) when (IsTranslatable(e))
 			{
@@ -272,6 +282,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		// request that opens the upload session is not retried) repeat the whole call here. Both are safe
 		// to repeat: a download is a read, and the upload's bytes are already in memory, so a repeat
 		// stores the same content. Timeouts are not repeated: each one already waited 100 seconds.
+		//
+		// The library retries Google's 408, 429 and 5xx answers on reads, listings and copies, but never a
+		// network failure (a reset connection, DNS, TLS): those calls go through WithNetworkRetry, which
+		// repeats only what the library does not, so the two retries never multiply.
 
 		private const int MaxAttempts = 3;
 
@@ -289,10 +303,49 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				int status = (int)api.HttpStatusCode;
 				if (status == 408 || status == 429 || status == 500 || status == 502 || status == 503 || status == 504) return true;
-				string details = api.Error != null && !string.IsNullOrEmpty(api.Error.Message) ? api.Error.Message : api.Message;
+				string details = ErrorDetails(api);
 				return status == 400 && IsChecksumMismatch(details);
 			}
-			return e is HttpRequestException || e is IOException;
+			return IsNetworkFailure(e);
+		}
+
+		/// <summary>
+		/// An IOException that comes from the connection. The file-system ones are left out: a Google or
+		/// System.* assembly that cannot be loaded is a FileNotFoundException or FileLoadException, and
+		/// retrying it or calling it a network error would hide the real cause.
+		/// </summary>
+		private static bool IsNetworkIo(Exception e)
+		{
+			return e is IOException && !(e is FileNotFoundException) && !(e is FileLoadException)
+				&& !(e is DirectoryNotFoundException) && !(e is PathTooLongException) && !(e is DriveNotFoundException);
+		}
+
+		/// <summary>A request that failed on the network: no HTTP answer was read.</summary>
+		private static bool IsNetworkFailure(Exception e)
+		{
+			return e is HttpRequestException || IsNetworkIo(e);
+		}
+
+		/// <summary>
+		/// True when a failed write may still have been applied by Google: the answer was lost on the
+		/// network, or Google answered 500, 502, 503 or 504. A 408 or 429 (and an upload checksum mismatch)
+		/// means Google refused the request, so nothing was applied.
+		/// </summary>
+		internal static bool MayHaveBeenApplied(Exception e)
+		{
+			var api = e as Google.GoogleApiException;
+			if (api == null) return true;
+			int status = (int)api.HttpStatusCode;
+			return status == 500 || status == 502 || status == 503 || status == 504;
+		}
+
+		/// <summary>A transient failure of the signBlob request that Google's credential code does not repeat itself: a network failure, a 408 or a 429.</summary>
+		private static bool IsTransientNotRepeatedBySigner(Exception e)
+		{
+			var api = e as Google.GoogleApiException;
+			if (api == null) return IsNetworkFailure(e);
+			int status = (int)api.HttpStatusCode;
+			return status == 408 || status == 429;
 		}
 
 		/// <summary>
@@ -300,6 +353,21 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// seconds (with jitter) between attempts. The last failure is rethrown unchanged.
 		/// </summary>
 		private static T WithRetry<T>(Func<T> call)
+		{
+			return Retry(call, IsTransient, null);
+		}
+
+		/// <summary>
+		/// Like WithRetry, but repeats only a network failure. For the calls whose 408, 429 and 5xx answers
+		/// the Storage library already retries.
+		/// </summary>
+		private static T WithNetworkRetry<T>(Func<T> call)
+		{
+			return Retry(call, IsNetworkFailure, null);
+		}
+
+		/// <summary>The retry loop. beforeRetry, when given, sees each failure that is about to be repeated.</summary>
+		private static T Retry<T>(Func<T> call, Func<Exception, bool> retriable, Action<Exception> beforeRetry)
 		{
 			var random = new Random();
 			for (int attempt = 1; ; attempt++)
@@ -316,8 +384,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 						throw; // not reached
 					}
 				}
-				catch (Exception e) when (attempt < MaxAttempts && IsTransient(e))
+				catch (Exception e) when (attempt < MaxAttempts && retriable(e))
 				{
+					if (beforeRetry != null) beforeRetry(e);
 					var delay = TimeSpan.FromMilliseconds(1000 * (1 << (attempt - 1)) + random.Next(0, 500));
 					var sleep = RetrySleepOverride;
 					if (sleep != null) sleep(delay); else Thread.Sleep(delay);
@@ -328,18 +397,18 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Sends a write that carries a generation precondition, with the library's own retry turned off
 		/// (RetryOptions.Never), and repeats it here on a transient failure, as WithRetry does. resent becomes
-		/// true once the request was sent more than once, so the caller can read a 412 correctly: after a
-		/// resend it means an earlier send was probably applied and its response lost, not that someone
-		/// else changed the object first.
+		/// true once the request is repeated after a failure that may have been applied (see
+		/// MayHaveBeenApplied), so the caller can read a 412 or 404 correctly: after such a resend it means
+		/// an earlier send was probably applied and its response lost, not that someone else changed the
+		/// object first. A repeat after a 408 or 429 does not set it: Google refused that send.
 		/// </summary>
 		/// <remarks>
-		/// resent is set at the moment of the resend, not in a finally block: the callers read it in exception
+		/// resent is set before the resend, not in a finally block: the callers read it in exception
 		/// filters, which run before any finally block of the throwing call.
 		/// </remarks>
 		private static void SendGuarded(Action send, System.Runtime.CompilerServices.StrongBox<bool> resent)
 		{
-			int sends = 0;
-			WithRetry(() => { if (sends++ > 0) resent.Value = true; send(); return 0; });
+			Retry(() => { send(); return 0; }, IsTransient, failure => { if (MayHaveBeenApplied(failure)) resent.Value = true; });
 		}
 
 		/// <summary>The largest object Object_Download can return: the most a .NET byte array holds (~2 GB). Settable only for tests.</summary>
@@ -355,7 +424,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		private sealed class BoundedMemoryStream : MemoryStream
 		{
 			private readonly long _max;
-			public BoundedMemoryStream(long max) { _max = max; }
+			/// <param name="max">The most bytes the buffer accepts.</param>
+			/// <param name="capacity">The expected size, allocated once up front; 0 when unknown.</param>
+			public BoundedMemoryStream(long max, int capacity) : base(capacity) { _max = max; }
+
+			/// <summary>The downloaded bytes, without a second copy when the buffer was sized exactly.</summary>
+			public byte[] ToContent()
+			{
+				return Length == Capacity ? GetBuffer() : ToArray();
+			}
 
 			public override void Write(byte[] buffer, int offset, int count)
 			{
@@ -376,6 +453,190 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 		}
 
+		// ---- Download stall guard -------------------------------------------------------------------------
+		// HttpClient's timeout covers a request only until the response headers arrive. A download body
+		// that then stops arriving would hold the calling request until the platform's own timeout. The
+		// guard below closes the connection when no byte arrives for DownloadStallTimeout; it is not a limit
+		// on the whole download, so a large object on a slow link still completes.
+
+		/// <summary>How long a download may receive nothing before it is abandoned. Settable only for tests.</summary>
+		internal static TimeSpan DownloadStallTimeout = TimeSpan.FromSeconds(60);
+
+		/// <summary>The read buffer of a download. The library's default is 10 MB, allocated for every download.</summary>
+		private const int DownloadChunkBytes = 1024 * 1024;
+
+		/// <summary>Thrown when a download body stalls. Not an IOException, so it is never retried: it already waited.</summary>
+		private sealed class DownloadStalledException : Exception
+		{
+			public DownloadStalledException(TimeSpan limit, Exception inner)
+				: base("No data was received for " + (int)limit.TotalSeconds + " seconds.", inner) { Limit = limit; }
+
+			public TimeSpan Limit { get; private set; }
+		}
+
+		/// <summary>
+		/// Wraps a response body: when a single read waits longer than the limit, the read fails with
+		/// DownloadStalledException and the body is closed, which releases the connection. The failure
+		/// does not depend on the close ending the pending read: that read is abandoned if it does not.
+		/// </summary>
+		private sealed class StallGuardStream : Stream
+		{
+			private readonly Stream _inner;
+			private readonly TimeSpan _limit;
+			private readonly Timer _timer;
+			private readonly TaskCompletionSource<int> _stall = new TaskCompletionSource<int>();
+			private volatile bool _stalled;
+			// The read the timer is watching: 0 when none is pending, and when it started (Stopwatch ticks).
+			private int _reading;
+			private long _readStarted;
+
+			public StallGuardStream(Stream inner, TimeSpan limit)
+			{
+				_inner = inner;
+				_limit = limit;
+				_timer = new Timer(OnStall, null, Timeout.Infinite, Timeout.Infinite);
+			}
+
+			private void OnStall(object state)
+			{
+				// The timer may fire for a read that has just finished, or after the next one started: act
+				// only when a read is pending and has really waited the whole limit. A callback that comes
+				// early for the current read is re-armed for the time that is left.
+				if (Volatile.Read(ref _reading) == 0) return;
+				TimeSpan waited = TimeSpan.FromSeconds((System.Diagnostics.Stopwatch.GetTimestamp() - Volatile.Read(ref _readStarted)) / (double)System.Diagnostics.Stopwatch.Frequency);
+				if (waited < _limit)
+				{
+					try { _timer.Change(_limit - waited, Timeout.InfiniteTimeSpan); } catch (ObjectDisposedException) { }
+					return;
+				}
+				_stalled = true;
+				// Run the waiting read's continuation elsewhere: the close below must not wait for it.
+				Task.Run(() => _stall.TrySetResult(0));
+				// Closing the body ends a pending read that ignores its cancellation token, and frees the connection.
+				try { _inner.Dispose(); } catch (Exception) { }
+			}
+
+			private void Arm()
+			{
+				Volatile.Write(ref _readStarted, System.Diagnostics.Stopwatch.GetTimestamp());
+				Volatile.Write(ref _reading, 1);
+				try { _timer.Change(_limit, Timeout.InfiniteTimeSpan); } catch (ObjectDisposedException) { }
+			}
+
+			private void Disarm()
+			{
+				Volatile.Write(ref _reading, 0);
+				try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch (ObjectDisposedException) { }
+			}
+
+			public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+			{
+				Arm();
+				try
+				{
+					Task<int> read = _inner.ReadAsync(buffer, offset, count, cancellationToken);
+					if (!read.IsCompleted && await Task.WhenAny(read, _stall.Task).ConfigureAwait(false) != read)
+					{
+						// Stalled, and the read is still pending: leave it behind, observing its eventual failure.
+						Task observed = read.ContinueWith(t => { var ignored = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+						throw new DownloadStalledException(_limit, null);
+					}
+					return await read.ConfigureAwait(false);
+				}
+				catch (Exception e) when (_stalled && !(e is DownloadStalledException)) { throw new DownloadStalledException(_limit, e); }
+				finally { Disarm(); }
+			}
+
+			public override int Read(byte[] buffer, int offset, int count)
+			{
+				Arm();
+				try { return _inner.Read(buffer, offset, count); }
+				catch (Exception e) when (_stalled) { throw new DownloadStalledException(_limit, e); }
+				finally { Disarm(); }
+			}
+
+			public override bool CanRead { get { return true; } }
+			public override bool CanSeek { get { return false; } }
+			public override bool CanWrite { get { return false; } }
+			public override long Length { get { throw new NotSupportedException(); } }
+			public override long Position { get { throw new NotSupportedException(); } set { throw new NotSupportedException(); } }
+			public override void Flush() { }
+			public override long Seek(long offset, SeekOrigin origin) { throw new NotSupportedException(); }
+			public override void SetLength(long value) { throw new NotSupportedException(); }
+			public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
+
+			protected override void Dispose(bool disposing)
+			{
+				if (disposing)
+				{
+					_timer.Dispose();
+					_inner.Dispose();
+				}
+				base.Dispose(disposing);
+			}
+		}
+
+		/// <summary>Puts the stall guard on the body of every object download (a GET with alt=media), whatever its status.</summary>
+		private sealed class DownloadStallHandler : DelegatingHandler
+		{
+			public DownloadStallHandler(HttpMessageHandler inner) : base(inner) { }
+
+			protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+			{
+				var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+				if (request.Method != HttpMethod.Get || response.Content == null || request.RequestUri == null
+					|| request.RequestUri.Query.IndexOf("alt=media", StringComparison.Ordinal) < 0)
+					return response;
+
+				var original = response.Content;
+				var body = await original.ReadAsStreamAsync().ConfigureAwait(false);
+				var guarded = new StreamContent(new StallGuardStream(body, DownloadStallTimeout));
+				// The library reads the content headers (length, encoding) to decide how to check the data.
+				foreach (var header in original.Headers)
+					guarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
+				response.Content = guarded;
+				return response;
+			}
+		}
+
+		/// <summary>The HTTP client factory of every StorageClient: the given factory plus the download stall guard.</summary>
+		private sealed class StorageHttpClientFactory : IHttpClientFactory
+		{
+			private readonly IHttpClientFactory _inner;
+			public StorageHttpClientFactory(IHttpClientFactory inner) { _inner = inner; }
+
+			public ConfigurableHttpClient CreateHttpClient(CreateHttpClientArgs args)
+			{
+				var client = _inner.CreateHttpClient(args);
+				// The guard goes under Google's handler, so the library's retries and credentials still wrap it.
+				client.MessageHandler.InnerHandler = new DownloadStallHandler(client.MessageHandler.InnerHandler);
+				return client;
+			}
+		}
+
+		/// <summary>
+		/// Google's HTTP client factory with one change: each handler checks the server certificate itself,
+		/// so a process-wide ServicePointManager.ServerCertificateValidationCallback that another component
+		/// set to accept everything does not apply to the connections to Google.
+		/// </summary>
+		private sealed class CertificateCheckingHttpClientFactory : Google.Apis.Http.HttpClientFactory
+		{
+			protected override HttpClientHandler CreateClientHandler()
+			{
+				var handler = base.CreateClientHandler();
+				handler.ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => errors == System.Net.Security.SslPolicyErrors.None;
+				return handler;
+			}
+		}
+
+		private static readonly IHttpClientFactory ProductionHttpClientFactory = new CertificateCheckingHttpClientFactory();
+
+		/// <summary>The factory for every HTTP client that talks to Google: the test override when set, else the production one.</summary>
+		private static IHttpClientFactory GoogleHttpClientFactory
+		{
+			get { return HttpClientFactoryOverride ?? ProductionHttpClientFactory; }
+		}
+
 		/// <summary>
 		/// For a 404 on an object, decides whether the bucket is the missing part. Google's two messages
 		/// ("No such object: ..." and "The specified bucket does not exist.") settle it. Any other text
@@ -385,7 +646,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// </summary>
 		private static bool IsMissingBucket(StorageClient storageClient, Google.GoogleApiException e, string bucketName, string objectName)
 		{
-			string msg = (e.Error != null ? e.Error.Message : null) ?? e.Message ?? "";
+			string msg = ErrorDetails(e) ?? "";
 			if (msg.IndexOf("No such object", StringComparison.OrdinalIgnoreCase) >= 0) return false;
 			if (msg.IndexOf("specified bucket does not exist", StringComparison.OrdinalIgnoreCase) >= 0) return true;
 			try
@@ -398,13 +659,38 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		}
 
 		/// <summary>
-		/// Rejects an empty bucket name before any request. Without it the SDK fails with an unreadable
-		/// client-side "Parameter validation failed" error, after the action may already have made calls.
+		/// The characters and length the Storage library accepts in a bucket name (its own pattern), anchored
+		/// with \z: the library's '$' also matches before a final line feed, which would then reach a signed URL.
+		/// </summary>
+		private static readonly System.Text.RegularExpressions.Regex BucketNamePattern =
+			new System.Text.RegularExpressions.Regex(@"\A[0-9a-z._-]{1,222}\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+		/// <summary>
+		/// Rejects an empty or malformed bucket name before any request. Without it the SDK fails with an
+		/// unreadable client-side "Parameter validation failed" error for an empty name, and with an
+		/// ArgumentException that repeats the name as given (line breaks included) for a malformed one,
+		/// after the action may already have made calls.
 		/// </summary>
 		private static void RequireBucketName(string value, string parameterName)
 		{
 			if (string.IsNullOrWhiteSpace(value))
 				throw new ArgumentException(parameterName + " is required.");
+			if (!BucketNamePattern.IsMatch(value))
+				throw new ArgumentException(parameterName + " '" + SafeName(value) + "' is not a valid bucket name. A bucket name has only lowercase letters, digits, hyphens, underscores and dots, with no spaces. See https://cloud.google.com/storage/docs/buckets#naming.");
+		}
+
+		/// <summary>
+		/// Rejects a ContentType that cannot be sent as an HTTP header value: .NET refuses anything but
+		/// printable ASCII deep inside the request, where it would be retried and reported as a network error.
+		/// </summary>
+		private static void RequireHeaderValue(string value, string parameterName)
+		{
+			if (string.IsNullOrEmpty(value)) return;
+			if (value.IndexOf('\r') >= 0 || value.IndexOf('\n') >= 0)
+				throw new ArgumentException(parameterName + " must not contain line breaks.");
+			foreach (char c in value)
+				if (c < 0x20 || c > 0x7E)
+					throw new ArgumentException(parameterName + " must contain only printable ASCII characters (no control characters, accented letters or other non-ASCII characters).");
 		}
 
 		/// <summary>
@@ -434,7 +720,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 			catch (Exception probe) when (IsTranslatable(probe))
 			{
-				string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
+				string details = ErrorDetails(e);
 				return new Exception("The source object '" + SafeName(sourceBucketName) + "/" + SafeName(sourceObjectName) + "' or the destination bucket '" + SafeName(destinationBucketName)
 					+ "' does not exist, and checking which one failed: " + TranslateException(probe, auth, sourceBucketName, sourceObjectName, storageClient).Message + " Details: " + SafeDetail(details), e);
 			}
@@ -461,7 +747,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			try
 			{
-				var obj = storageClient.GetObject(ssBucketName, ssObjectName);
+				var obj = WithNetworkRetry(() => storageClient.GetObject(ssBucketName, ssObjectName));
 				ssExists = true;
 
 				ssMetadata.ssSTGCS_ObjectMetadata.ssName = obj.Name ?? "";
@@ -499,7 +785,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 			{
 				// The bucket is missing: say so whatever wording the 404 had.
-				string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
+				string details = ErrorDetails(e);
 				throw new Exception("Bucket '" + SafeName(ssBucketName) + "' does not exist (names are case-sensitive and must match exactly). Details: " + SafeDetail(details), e);
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName, storageClient); }
@@ -718,8 +1004,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		}
 
 		/// <summary>
-		/// Test seam: when set, all Google auth/Storage HTTP traffic and identity provider token requests
-		/// in WorkloadIdentityFederation mode go through this factory. Never set in production.
+		/// Test seam: when set, all Google auth/Storage HTTP traffic (both authentication methods) and the
+		/// identity provider token requests go through this factory. Never set in production.
 		/// </summary>
 		internal static IHttpClientFactory HttpClientFactoryOverride { get; set; }
 
@@ -767,6 +1053,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				throw new ArgumentException(MethodWorkloadIdentityFederation + " authentication requires WorkloadIdentityProvider, ServiceAccountEmail, and either SubjectToken or TokenEndpoint + ClientId + ClientSecret (missing: " + string.Join(", ", missing) + ").");
 
 			NormalizeWorkloadIdentityProvider(a.WorkloadIdentityProvider); // throws on a malformed value
+			// The e-mail becomes part of the IAM Credentials URL: keep path and query characters out of it.
+			if (!a.ServiceAccountEmail.Trim().All(c => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '@' || c == '.' || c == '-' || c == '_' || c == '+'))
+				throw new ArgumentException("ServiceAccountEmail '" + SafeName(a.ServiceAccountEmail) + "' is not a service account e-mail address (for example 'name@project-id.iam.gserviceaccount.com').");
 			if (string.IsNullOrWhiteSpace(a.SubjectToken))
 				ValidateTokenEndpoint(a.TokenEndpoint);
 			return resolved;
@@ -894,7 +1183,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				return StorageClientCache.GetOrAdd(
 					"emulator|" + baseUri,
-					_ => new StorageClientBuilder { BaseUri = baseUri, UnauthenticatedAccess = true }.Build(),
+					_ => new StorageClientBuilder { BaseUri = baseUri, UnauthenticatedAccess = true, HttpClientFactory = new StorageHttpClientFactory(GoogleHttpClientFactory) }.Build(),
 					DateTime.MaxValue);
 			}
 
@@ -903,15 +1192,13 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				var identity = GetFederatedIdentity(a);
 				return StorageClientCache.GetOrAdd(FederatedCacheKey(a), _ =>
 				{
-					var builder = new StorageClientBuilder { GoogleCredential = identity.Credential };
-					if (HttpClientFactoryOverride != null) builder.HttpClientFactory = HttpClientFactoryOverride;
-					return builder.Build();
+					return new StorageClientBuilder { GoogleCredential = identity.Credential, HttpClientFactory = new StorageHttpClientFactory(GoogleHttpClientFactory) }.Build();
 				}, identity.ExpiresUtc);
 			}
 
 			return StorageClientCache.GetOrAdd(
 				CacheKey("key", a.ClientEmail, a.PrivateKey),
-				_ => StorageClient.Create(GetServiceAccountCredential(a).ToGoogleCredential()),
+				_ => new StorageClientBuilder { GoogleCredential = GetServiceAccountCredential(a).ToGoogleCredential(), HttpClientFactory = new StorageHttpClientFactory(GoogleHttpClientFactory) }.Build(),
 				DateTime.MaxValue);
 		}
 
@@ -953,7 +1240,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				var initializer = new ServiceAccountCredential.Initializer(a.ClientEmail)
 				{
-					Scopes = new[] { StorageService.Scope.CloudPlatform }
+					Scopes = new[] { StorageService.Scope.CloudPlatform },
+					// The token request to Google goes through the same certificate-checking factory.
+					HttpClientFactory = GoogleHttpClientFactory
 				}.FromPrivateKey(a.PrivateKey.Replace("\\n", "\n"));
 
 				return new ServiceAccountCredential(initializer);
@@ -985,6 +1274,26 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			DateTime expiry;
 			return TryReadJwtExpiry(supplied, out expiry) ? expiry : DateTime.UtcNow.AddMinutes(5);
+		}
+
+		/// <summary>Longest SubjectToken accepted; a JWT is a few kilobytes at most.</summary>
+		internal const int MaxSubjectTokenLength = 32768;
+
+		/// <summary>
+		/// Rejects a supplied token that cannot be a JWT, before anything is cached for it: each distinct
+		/// token takes an entry in the credential caches, so arbitrary or very long text must not get that far.
+		/// The token itself is never put in the message.
+		/// </summary>
+		private static void ValidateSubjectTokenShape(string token)
+		{
+			if (token.Length > MaxSubjectTokenLength)
+				throw new ArgumentException("The SubjectToken is " + token.Length + " characters long; a JWT is at most a few thousand. Supply the identity provider's signed JWT.");
+
+			var parts = token.Split('.');
+			bool jwt = parts.Length == 3 && parts.All(part => part.Length > 0
+				&& part.All(c => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '='));
+			if (!jwt)
+				throw new ArgumentException("The SubjectToken is not a JWT (three base64url parts separated by dots). Supply the identity provider's signed JWT, without a 'Bearer ' prefix.");
 		}
 
 		/// <summary>
@@ -1090,10 +1399,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 		private static FederatedIdentity GetFederatedIdentity(AuthConfig a)
 		{
-			// The expiry check runs before the cache lookup and before any network call: an expired
-			// token must never be exchanged, and a cached identity built from it must not be reused.
+			// The shape and expiry checks run before the cache lookup and before any network call: text
+			// that is not a JWT must never take a cache entry, an expired token must never be exchanged,
+			// and a cached identity built from it must not be reused.
 			string supplied = SuppliedToken(a);
-			if (supplied != null) ValidateSubjectTokenExpiry(supplied);
+			if (supplied != null)
+			{
+				ValidateSubjectTokenShape(supplied);
+				ValidateSubjectTokenExpiry(supplied);
+			}
 
 			return FederatedIdentityCache.GetOrAdd(FederatedCacheKey(a), _ => CreateFederatedIdentity(a), FederatedExpiry(a));
 		}
@@ -1105,16 +1419,16 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var externalInitializer = new ProgrammaticExternalAccountCredential.Initializer(
 				StsTokenUrl, NormalizeWorkloadIdentityProvider(a.WorkloadIdentityProvider), JwtSubjectTokenType, tokenSource)
 			{
-				Scopes = new[] { StorageService.Scope.CloudPlatform }
+				Scopes = new[] { StorageService.Scope.CloudPlatform },
+				HttpClientFactory = GoogleHttpClientFactory
 			};
-			if (HttpClientFactoryOverride != null) externalInitializer.HttpClientFactory = HttpClientFactoryOverride;
 			var federated = GoogleCredential.FromProgrammaticExternalAccountCredential(new ProgrammaticExternalAccountCredential(externalInitializer));
 
 			var impersonationInitializer = new ImpersonatedCredential.Initializer(a.ServiceAccountEmail.Trim())
 			{
-				Scopes = new[] { StorageService.Scope.CloudPlatform }
+				Scopes = new[] { StorageService.Scope.CloudPlatform },
+				HttpClientFactory = GoogleHttpClientFactory
 			};
-			if (HttpClientFactoryOverride != null) impersonationInitializer.HttpClientFactory = HttpClientFactoryOverride;
 
 			return new FederatedIdentity(federated.Impersonate(impersonationInitializer), tokenSource, FederatedExpiry(a));
 		}
@@ -1148,13 +1462,19 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				if (!string.IsNullOrEmpty(_suppliedToken))
 					return _suppliedToken;
 
-				await _lock.WaitAsync(taskCancellationToken).ConfigureAwait(false);
+				// Google's token for this call is not observed. Its first sign-in attempt allows 12 seconds and
+				// treats any failure here as final, so a provider that needs 15 seconds would fail with "A task
+				// was canceled" and never reach the longer second attempt. The request has its own deadline
+				// (IdentityProviderTimeout) instead, and a token obtained after Google's first attempt gave up
+				// is cached here for its second attempt.
+				if (!await _lock.WaitAsync(IdentityProviderTimeout + TimeSpan.FromSeconds(5)).ConfigureAwait(false))
+					throw new IdentityProviderException("The identity provider token endpoint '" + SafeDetail(EndpointForDisplay(_tokenEndpoint)) + "' did not respond within " + (int)IdentityProviderTimeout.TotalSeconds + " seconds.");
 				try
 				{
 					if (_cachedToken != null && DateTimeOffset.UtcNow < _cachedUntil)
 						return _cachedToken;
 
-					var result = await RequestClientCredentialsTokenAsync(taskCancellationToken).ConfigureAwait(false);
+					var result = await RequestClientCredentialsTokenAsync().ConfigureAwait(false);
 					_cachedToken = result.Token;
 					// Refresh a minute early (or halfway through a very short lifetime).
 					var margin = result.Lifetime > TimeSpan.FromMinutes(2) ? TimeSpan.FromMinutes(1) : TimeSpan.FromTicks(result.Lifetime.Ticks / 2);
@@ -1173,7 +1493,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				public TimeSpan Lifetime;
 			}
 
-			private async Task<IdpToken> RequestClientCredentialsTokenAsync(CancellationToken ct)
+			private async Task<IdpToken> RequestClientCredentialsTokenAsync()
 			{
 				HttpClient http;
 				if (HttpClientFactoryOverride != null)
@@ -1190,7 +1510,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				// client_secret_post first (Entra ID, Auth0, Keycloak); if the provider rejects the client,
 				// retry once with HTTP Basic client authentication (Okta's default). One deadline covers
 				// both attempts and response bodies.
-				using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct))
+				using (var deadline = new CancellationTokenSource())
 				{
 					deadline.CancelAfter(IdentityProviderTimeout);
 				for (int attempt = 0; ; attempt++)
@@ -1221,9 +1541,6 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 						}
 						catch (Exception e) when (e is HttpRequestException || e is TaskCanceledException)
 						{
-							// A cancelled caller token is not a timeout: propagate it unchanged.
-							if (ct.IsCancellationRequested)
-								throw;
 							if (e is TaskCanceledException)
 								throw new IdentityProviderException("The identity provider token endpoint '" + SafeDetail(EndpointForDisplay(_tokenEndpoint)) + "' did not respond within " + (int)IdentityProviderTimeout.TotalSeconds + " seconds.", e);
 								throw new IdentityProviderException("Could not reach the identity provider token endpoint '" + SafeDetail(EndpointForDisplay(_tokenEndpoint)) + "': " + SafeDetail(e.Message), e);
@@ -1231,7 +1548,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 						using (response)
 						{
-							string body = await ReadIdentityProviderBodyAsync(response, _tokenEndpoint, deadline.Token, ct).ConfigureAwait(false);
+							string body = await ReadIdentityProviderBodyAsync(response, _tokenEndpoint, deadline.Token).ConfigureAwait(false);
 
 							// The production client follows no redirects (and the test one does not need to):
 							// a 3xx means TokenEndpoint points at a redirecting URL.
@@ -1268,8 +1585,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							{
 								// Both fields come from the identity provider: bound their length and drop control
 								// characters, so they cannot flood or forge lines in the OutSystems error log.
-								error = CleanForMessage(RedactSecret(error, _clientSecret), 100);
-								description = CleanForMessage(RedactSecret(description, _clientSecret), 300);
+								error = CleanForMessage(Redact(error), 100);
+								description = CleanForMessage(Redact(description), 300);
 								detail = error == null && description == null
 									? "(the response body contained no 'error' or 'error_description')"
 									: error == null ? description : description == null ? error : error + ": " + description;
@@ -1277,7 +1594,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							else
 							{
 								detail = "(non-JSON response, " + Encoding.UTF8.GetByteCount(body) + " bytes, Content-Type "
-									+ SafeDetail(response.Content.Headers.ContentType != null ? response.Content.Headers.ContentType.ToString() : "none") + ")";
+									+ CleanForMessage(Redact(response.Content.Headers.ContentType != null ? response.Content.Headers.ContentType.ToString() : "none"), 100) + ")";
 							}
 
 							bool invalidClient = response.StatusCode == HttpStatusCode.Unauthorized || error == "invalid_client";
@@ -1298,7 +1615,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			/// Reads the token endpoint's response body as UTF-8, failing beyond 1 MB instead of buffering
 			/// whatever the endpoint sends, using the shared identity provider exchange deadline.
 			/// </summary>
-			private static async Task<string> ReadIdentityProviderBodyAsync(HttpResponseMessage response, string tokenEndpoint, CancellationToken deadlineToken, CancellationToken callerToken)
+			private static async Task<string> ReadIdentityProviderBodyAsync(HttpResponseMessage response, string tokenEndpoint, CancellationToken deadlineToken)
 			{
 				long? declared = response.Content.Headers.ContentLength;
 				if (declared.HasValue && declared.Value > MaxIdentityProviderResponseBytes)
@@ -1335,7 +1652,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 									return reader.ReadToEnd();
 							}
 						}
-						catch (Exception e) when (!(e is IdentityProviderException) && !callerToken.IsCancellationRequested && deadlineToken.IsCancellationRequested)
+						catch (Exception e) when (!(e is IdentityProviderException) && deadlineToken.IsCancellationRequested)
 						{
 							throw new IdentityProviderException("The identity provider token endpoint '" + SafeDetail(EndpointForDisplay(tokenEndpoint)) + "' did not finish sending its response within " + (int)IdentityProviderTimeout.TotalSeconds + " seconds.", e);
 						}
@@ -1379,11 +1696,25 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				return true;
 			}
 
+			/// <summary>
+			/// Masks, in text that comes from the identity provider, everything this source sent it that is
+			/// secret: the ClientSecret in each form it can be echoed in, and the value of the HTTP Basic
+			/// Authorization header, which is the client id and secret in reversible Base64.
+			/// </summary>
+			private string Redact(string text)
+			{
+				text = RedactSecret(text, _clientSecret);
+				if (text == null || string.IsNullOrEmpty(_clientSecret)) return text;
+				string basic = Convert.ToBase64String(Encoding.UTF8.GetBytes(Uri.EscapeDataString(_clientId ?? string.Empty) + ":" + Uri.EscapeDataString(_clientSecret)));
+				return text.Replace(basic, "[redacted]");
+			}
+
 			private static string RedactSecret(string text, string secret)
 			{
 				if (text == null) return null;
 				if (string.IsNullOrEmpty(secret)) return text;
-				string[] forms = { secret, Uri.EscapeDataString(secret), WebUtility.UrlEncode(secret) };
+				// The last form is how FormUrlEncodedContent sends it: escaped, with spaces as '+'.
+				string[] forms = { secret, Uri.EscapeDataString(secret), WebUtility.UrlEncode(secret), Uri.EscapeDataString(secret).Replace("%20", "+") };
 				foreach (string form in forms)
 					if (!string.IsNullOrEmpty(form)) text = text.Replace(form, "[redacted]");
 				return text;
@@ -1422,7 +1753,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		private static Exception FriendlyAuthException(TokenResponseException e, AuthConfig a)
 		{
 			if (ResolveAuthMethodSafe(a) == AuthMethod.WorkloadIdentityFederation)
-				return new Exception("Workload Identity Federation failed for service account '" + SafeName(a.ServiceAccountEmail) + "': Google rejected the token exchange or impersonation. Common causes: a wrong WorkloadIdentityProvider value, a token whose issuer or audience does not match the provider, a token rejected by the attribute condition, or a federated identity without 'Workload Identity User' on the service account. Details: " + SafeDetail(e.Message), e);
+				return new Exception("Workload Identity Federation failed for service account '" + SafeName(a.ServiceAccountEmail) + "': Google rejected the token exchange or impersonation. Common causes: a wrong WorkloadIdentityProvider value, a token whose issuer or audience does not match the provider, a token rejected by the attribute condition, or a federated identity without 'Workload Identity User' on the service account. Details: " + SafeAuthDetail(e.Message, a), e);
 
 			return new Exception("Google rejected the service account credentials for '" + SafeName(a.ClientEmail) + "' (ClientEmail/PrivateKey mismatch, deleted service account, revoked key, or server clock skew). Details: " + SafeDetail(e.Message), e);
 		}
@@ -1440,8 +1771,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				if (api == null)
 					return new Exception("Signing the URL failed for service account '" + SafeName(a.ServiceAccountEmail) + "': " + SafeDetail(InnermostMessage(e)), e);
 				if (api.HttpStatusCode == System.Net.HttpStatusCode.Forbidden)
-					return new Exception("Signing the URL failed: service account '" + SafeName(a.ServiceAccountEmail) + "' could not sign through the IAM Credentials API. Grant the federated identity 'Service Account Token Creator' on the service account. Details: " + SafeDetail(api.Error != null && !string.IsNullOrEmpty(api.Error.Message) ? api.Error.Message : api.Message), e);
-				string details = api.Error != null && !string.IsNullOrEmpty(api.Error.Message) ? api.Error.Message : api.Message;
+					return new Exception("Signing the URL failed: service account '" + SafeName(a.ServiceAccountEmail) + "' could not sign through the IAM Credentials API. Grant the federated identity 'Service Account Token Creator' on the service account. Details: " + SafeDetail(ErrorDetails(api)), e);
+				string details = ErrorDetails(api);
 				return new Exception("Signing the URL failed for service account '" + SafeName(a.ServiceAccountEmail) + "' (" + (int)api.HttpStatusCode + "): " + SafeDetail(details), e);
 			}
 			return new Exception("Signing the URL failed for service account '" + SafeName(a.ClientEmail) + "'. Details: " + SafeDetail(e.Message), e);
@@ -1485,10 +1816,33 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// </summary>
 		private static bool IsBucketNotFound(Google.GoogleApiException e)
 		{
-			string msg = (e.Error != null ? e.Error.Message : null) ?? e.Message ?? "";
+			string msg = ErrorDetails(e) ?? "";
 			if (msg.IndexOf("No such object", StringComparison.OrdinalIgnoreCase) >= 0)
 				return false;
 			return msg.IndexOf("bucket", StringComparison.OrdinalIgnoreCase) >= 0;
+		}
+
+		/// <summary>
+		/// Google's own text for an API error: the message of its JSON error, or, when the body was not JSON
+		/// (a plain-text answer, a proxy page), the start of that body, or else the library's message.
+		/// </summary>
+		private static string ErrorDetails(Google.GoogleApiException e)
+		{
+			if (e.Error != null)
+			{
+				if (!string.IsNullOrEmpty(e.Error.Message)) return e.Error.Message;
+				string raw = e.Error.ErrorResponseContent;
+				if (!string.IsNullOrWhiteSpace(raw)) return CleanForMessage(raw.Trim(), 300);
+			}
+			return e.Message;
+		}
+
+		/// <summary>The status of an API error as "429 TooManyRequests": .NET Framework has no name for 429.</summary>
+		private static string StatusLabel(System.Net.HttpStatusCode status)
+		{
+			int code = (int)status;
+			if (Enum.IsDefined(typeof(System.Net.HttpStatusCode), status)) return code + " " + status;
+			return code == 429 ? "429 TooManyRequests" : code.ToString(System.Globalization.CultureInfo.InvariantCulture);
 		}
 
 		/// <summary>
@@ -1516,12 +1870,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 				|| e is IdentityProviderException
 				|| e is HttpRequestException
 				|| e is TaskCanceledException
-				|| e is IOException;
+				|| IsNetworkIo(e);
 		}
 
 		/// <summary>
 		/// Text from an outside party made safe for an error message: control characters (line breaks
-		/// included), Unicode line separators and bidirectional overrides become spaces and the result is cut to maxLength characters, with "..." when cut.
+		/// included), Unicode line separators, bidirectional overrides and direction marks become spaces and the result is cut to maxLength characters, with "..." when cut.
 		/// </summary>
 		internal static string CleanForMessage(string text, int maxLength)
 		{
@@ -1535,9 +1889,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					if (char.IsHighSurrogate(sb[sb.Length - 1])) sb.Length--;
 					return sb.ToString() + "...";
 				}
-				// Line and paragraph separators and bidirectional overrides can fake or reorder log text too.
+				// Line and paragraph separators, bidirectional overrides and direction marks can fake or reorder log text too.
 				bool unsafeChar = char.IsControl(c) || c == '\u2028' || c == '\u2029'
-					|| (c >= '\u202A' && c <= '\u202E') || (c >= '\u2066' && c <= '\u2069');
+					|| (c >= '\u202A' && c <= '\u202E') || (c >= '\u2066' && c <= '\u2069')
+					|| c == '\u200E' || c == '\u200F' || c == '\u061C';
 				sb.Append(unsafeChar ? ' ' : c);
 			}
 			return sb.ToString();
@@ -1546,8 +1901,26 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>A caller-supplied name, prefix or value, made safe to put in an error message.</summary>
 		internal static string SafeName(string value) { return CleanForMessage(value, 1024); }
 
-		/// <summary>Error text from Google, the SDK or the network, made safe to put in an error message.</summary>
-		internal static string SafeDetail(string value) { return CleanForMessage(value, 1000); }
+		/// <summary>A JWT anywhere in a text: three base64url parts, the first starting with 'eyJ' (the encoding of '{"').</summary>
+		private static readonly System.Text.RegularExpressions.Regex JwtPattern =
+			new System.Text.RegularExpressions.Regex(@"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*=*", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+		/// <summary>
+		/// Error text from Google, the SDK or the network, made safe to put in an error message. A JWT in it
+		/// is masked: a token service can repeat the token it was sent, and a token is a credential.
+		/// </summary>
+		internal static string SafeDetail(string value)
+		{
+			return value == null ? null : CleanForMessage(JwtPattern.Replace(value, "[token]"), 1000);
+		}
+
+		/// <summary>SafeDetail, also masking the caller's SubjectToken when the text repeats it.</summary>
+		private static string SafeAuthDetail(string value, AuthConfig a)
+		{
+			string supplied = SuppliedToken(a);
+			if (value != null && supplied != null) value = value.Replace(supplied, "[token]");
+			return SafeDetail(value);
+		}
 
 		/// <summary>Ends a message fragment with a period unless it already ends a sentence.</summary>
 		private static string EndSentence(string text)
@@ -1628,7 +2001,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// </summary>
 		private static Exception FriendlyException(Google.GoogleApiException e, AuthConfig a, string bucketName, string objectName, StorageClient storageClient = null)
 		{
-			string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
+			string details = ErrorDetails(e);
 
 			if (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && bucketName != null)
 			{
@@ -1648,10 +2021,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					return new Exception("Bucket '" + SafeName(bucketName) + "' is not empty. Delete all objects in it before deleting the bucket. Details: " + SafeDetail(details), e);
 				return new Exception("Conflict: " + SafeDetail(details) + " (for Bucket_Create this usually means the name is already taken - bucket names are global across all of Google Cloud Storage).", e);
 			}
-			// Status 0: the SDK rejected the request itself (for example "Parameter validation failed"), so nothing reached Google.
 			if ((int)e.HttpStatusCode == 0)
+			{
+				// A successful answer that is not Google's JSON: something on the way answered in its place.
+				if (details != null && details.IndexOf("Failed to parse response", StringComparison.OrdinalIgnoreCase) >= 0)
+					return new Exception("The answer to the request was not from Google Cloud Storage: a proxy, firewall or sign-in page probably answered in its place. Check the server's outbound HTTPS access to *.googleapis.com. Details: " + CleanForMessage(details, 300), e);
+				// Otherwise the SDK rejected the request itself (for example "Parameter validation failed"), so nothing reached Google.
 				return new Exception("The request was rejected by the Google Cloud Storage client library before it was sent: " + SafeDetail(details), e);
-			return new Exception("Google Cloud Storage error (" + (int)e.HttpStatusCode + " " + e.HttpStatusCode + "): " + SafeDetail(details), e);
+			}
+			return new Exception("Google Cloud Storage error (" + StatusLabel(e.HttpStatusCode) + "): " + SafeDetail(details), e);
 		}
 
 		/// <summary>
@@ -1668,7 +2046,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			try
 			{
-				var buckets = storageClient.ListBuckets(auth.ProjectId);
+				var buckets = WithNetworkRetry(() => storageClient.ListBuckets(auth.ProjectId).ToList());
 
 				foreach (var b in buckets)
 				{
@@ -1702,19 +2080,45 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			RequireProjectId(auth, "Bucket_Create");
 			var storageClient = GetStorageClient(auth);
 
+			// The library would repeat a create after a 5xx by itself, and report 'name already taken' when
+			// the first send had in fact created the bucket. The repeat is done here, so that case is known.
+			DateTime startedUtc = DateTime.UtcNow;
+			var resent = new System.Runtime.CompilerServices.StrongBox<bool>();
 			try
 			{
-				storageClient.CreateBucket(
+				SendGuarded(() => storageClient.CreateBucket(
 					auth.ProjectId,
 					new Bucket
 					{
 						Name = ssBucketName,
 						Location = string.IsNullOrWhiteSpace(ssLocation) ? null : ssLocation.Trim()
-					}
-				);
+					},
+					new CreateBucketOptions { RetryOptions = RetryOptions.Never }
+				), resent);
+			}
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.Conflict && resent.Value && WasCreatedSince(storageClient, ssBucketName, startedUtc))
+			{
+				// An earlier send of this request created the bucket and its response was lost.
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, null); }
 		} // MssBucket_Create
+
+		/// <summary>
+		/// After a repeated Bucket_Create is answered 'name already taken': true when the bucket is readable
+		/// with these credentials and was created after this call started, which means an earlier send of
+		/// the same request created it. Google's clock and this server's can differ, so a creation time up
+		/// to one minute before the start still counts; with a larger difference the conflict is reported,
+		/// as before 1.7.5. Any failure of the check also counts as 'no'.
+		/// </summary>
+		private static bool WasCreatedSince(StorageClient storageClient, string bucketName, DateTime startedUtc)
+		{
+			try
+			{
+				var bucket = WithNetworkRetry(() => storageClient.GetBucket(bucketName));
+				return ParseTimestamp(bucket.TimeCreatedRaw) >= startedUtc.AddMinutes(-1);
+			}
+			catch (Exception e) when (IsTranslatable(e)) { return false; }
+		}
 
 		/// <summary>
 		/// Deletes a bucket. The bucket must be empty.
@@ -1726,9 +2130,16 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			RequireBucketName(ssBucketName, "BucketName");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
+			// As in Bucket_Create: the repeat after a transient failure is done here, so a 404 on the repeat
+			// is known to mean that the first send had already deleted the bucket.
+			var resent = new System.Runtime.CompilerServices.StrongBox<bool>();
 			try
 			{
-				storageClient.DeleteBucket(ssBucketName);
+				SendGuarded(() => storageClient.DeleteBucket(ssBucketName, new DeleteBucketOptions { RetryOptions = RetryOptions.Never }), resent);
+			}
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && resent.Value)
+			{
+				// Deleted by an earlier send of this request whose response was lost.
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, null); }
 		} // MssBucket_Delete
@@ -1756,7 +2167,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					long? generation;
 					try
 					{
-						generation = storageClient.GetObject(ssBucketName, ssObjectName).Generation;
+						generation = WithNetworkRetry(() => storageClient.GetObject(ssBucketName, ssObjectName)).Generation;
 					}
 					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && attempt > 1)
 					{
@@ -1783,8 +2194,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					}
 					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && resent.Value)
 					{
-						// A prior send may have deleted this generation before its response was lost. Do not
-						// re-read, since that could delete a newer generation.
+						// A prior send that may have been applied (a 5xx answer or a lost response, never a 408
+						// or 429) may have deleted this generation. Do not re-read, since that could delete a
+						// newer generation.
 						return;
 					}
 					catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && attempt < MaxAttempts)
@@ -1816,7 +2228,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			try
 			{
-				storageClient.GetObject(ssBucketName, ssObjectName);
+				WithNetworkRetry(() => storageClient.GetObject(ssBucketName, ssObjectName));
 				ssExists = true;
 			}
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound && !IsMissingBucket(storageClient, e, ssBucketName, ssObjectName))
@@ -1826,21 +2238,21 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
 			{
 				// The bucket is missing: say so whatever wording the 404 had.
-				string details = e.Error != null && !string.IsNullOrEmpty(e.Error.Message) ? e.Error.Message : e.Message;
+				string details = ErrorDetails(e);
 				throw new Exception("Bucket '" + SafeName(ssBucketName) + "' does not exist (names are case-sensitive and must match exactly). Details: " + SafeDetail(details), e);
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, ssObjectName, storageClient); }
 		} // MssObject_Exists
 
 		/// <summary>
-		/// Generates a signed URL for an object.
+		/// Generates a time-limited V4 signed URL that lets a browser or other client download, upload or delete one object directly from Google, without credentials.
 		/// </summary>
 		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
-		/// <param name="ssOperation">&apos;Download&apos;, &apos;Upload&apos; or &apos;Delete&apos; (case-insensitive).</param>
+		/// <param name="ssOperation">&apos;Download&apos;, &apos;Upload&apos; or &apos;Delete&apos; (case-insensitive). Defaults to &apos;Download&apos; when the input is not set; an empty text is rejected.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssObjectName">The full path/name of the object the URL grants access to. Required: a URL without an object name would grant access to the bucket itself.</param>
-		/// <param name="ssExpirationMinutes">How long the URL stays valid: 1 to 10080 minutes (7 days, the maximum for a V4 signed URL).</param>
-		/// <param name="ssContentType">Upload only: the exact Content-Type the client must send, which becomes part of the signature. Ignored for Download and Delete.</param>
+		/// <param name="ssExpirationMinutes">How long the URL stays valid: 1 to 10080 minutes (7 days, the maximum for a V4 signed URL). With Workload Identity Federation use 720 (12 hours) or less: Google signs the URL with a key it rotates, so a longer-lived URL can stop working early.</param>
+		/// <param name="ssContentType">Upload only: the exact Content-Type the client must send, which becomes part of the signature. Ignored for Download and Delete. Printable ASCII only.</param>
 		/// <param name="ssURL">The V4 signed URL.</param>
 		public void MssObject_GetSignedUrl(RCGCS_AuthenticationRecord ssAuthentication, string ssOperation, string ssBucketName, string ssObjectName, int ssExpirationMinutes, string ssContentType, out string ssURL)
 		{
@@ -1849,8 +2261,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			RequireBucketName(ssBucketName, "BucketName");
 			if (string.IsNullOrEmpty(ssObjectName))
 				throw new ArgumentException("ObjectName is required; a signed URL without an object name would grant access to the bucket itself.");
-			if (!string.IsNullOrEmpty(ssContentType) && (ssContentType.IndexOf('\r') >= 0 || ssContentType.IndexOf('\n') >= 0))
-				throw new ArgumentException("ContentType must not contain line breaks.");
+			RequireHeaderValue(ssContentType, "ContentType");
 
 			if (ssExpirationMinutes <= 0)
 				throw new ArgumentException("ExpirationMinutes must be greater than zero (received " + ssExpirationMinutes + ").");
@@ -1896,7 +2307,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			try
 			{
-				ssURL = urlSigner.Sign(template, UrlSigner.Options.FromDuration(TimeSpan.FromMinutes(ssExpirationMinutes)));
+				// With a key the signature is computed locally. With federation it is one signBlob request,
+				// which is safe to repeat: signing changes nothing. Google's credential code already repeats
+				// that request after a 500, 502, 503 or 504, but not after a network failure, a 408 or a 429:
+				// only those are repeated here, so the two retries do not multiply.
+				var options = UrlSigner.Options.FromDuration(TimeSpan.FromMinutes(ssExpirationMinutes));
+				ssURL = Retry(() => urlSigner.Sign(template, options), IsTransientNotRepeatedBySigner, null);
 			}
 			// A Google API error while signing comes from signBlob (federation); token, network and
 			// timeout failures get the same messages as every other action.
@@ -1917,9 +2333,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		{
 			RequireBucketName(ssBucketName, "BucketName");
 			RequireObjectName(ssObjectName, "ObjectName");
-			// ContentType becomes an HTTP header; a line break would fail deep in .NET with a FormatException.
-			if (!string.IsNullOrEmpty(ssContentType) && (ssContentType.IndexOf('\r') >= 0 || ssContentType.IndexOf('\n') >= 0))
-				throw new ArgumentException("ContentType must not contain line breaks.");
+			// ContentType becomes an HTTP header; a line break or a non-ASCII character would fail deep in .NET.
+			RequireHeaderValue(ssContentType, "ContentType");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 			var metadata = ToMetadataDictionary(ssMetadata);
@@ -1964,19 +2379,36 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			try
 			{
+				// Read the size first: an object over the limit fails before any content is transferred, and
+				// the buffer is allocated once at its final size instead of growing by doubling. The size is
+				// only a hint (the object may be replaced before the download, and an object stored with
+				// Content-Encoding: gzip is served decompressed, so larger): the buffer still grows and still
+				// stops at the limit. The content type comes from the download itself, never from this read.
+				var current = WithNetworkRetry(() => storageClient.GetObject(ssBucketName, ssObjectName));
+				long storedSize = (long)Math.Min(current.Size ?? 0, long.MaxValue);
+				// Only an object served as stored is refused by its size: a compressed one is delivered with
+				// another size (usually larger, for tiny content smaller), so the download itself decides.
+				bool servedAsStored = string.IsNullOrEmpty(current.ContentEncoding) || current.ContentEncoding.Equals("identity", StringComparison.OrdinalIgnoreCase);
+				if (servedAsStored && storedSize > MaxDownloadBytes) throw new DownloadTooLargeException();
+				int capacity = (int)Math.Min(storedSize, MaxDownloadBytes);
+
 				// Repeated on a transient failure (see WithRetry), each time into a fresh buffer: the
 				// library has no retry setting for downloads.
 				var result = WithRetry(() =>
 				{
-					using (var stream = new BoundedMemoryStream(MaxDownloadBytes))
+					using (var stream = new BoundedMemoryStream(MaxDownloadBytes, capacity))
 					{
 						// Automatic skips the hash check when Google serves the object transcoded (e.g. Content-Encoding: gzip), where it would fail on valid data.
-						var obj = storageClient.DownloadObject(ssBucketName, ssObjectName, stream, new DownloadObjectOptions { DownloadValidationMode = DownloadValidationMode.Automatic });
-						return new KeyValuePair<byte[], string>(stream.ToArray(), obj.ContentType ?? "");
+						var obj = storageClient.DownloadObject(ssBucketName, ssObjectName, stream, new DownloadObjectOptions { DownloadValidationMode = DownloadValidationMode.Automatic, ChunkSize = DownloadChunkBytes });
+						return new KeyValuePair<byte[], string>(stream.ToContent(), obj.ContentType ?? "");
 					}
 				});
 				ssContent = result.Key;
 				ssContentType = result.Value;
+			}
+			catch (Exception e) when (FindInChain<DownloadStalledException>(e) != null)
+			{
+				throw new Exception("The download of object '" + SafeName(ssObjectName) + "' from bucket '" + SafeName(ssBucketName) + "' stalled: Google Cloud sent no data for " + (int)FindInChain<DownloadStalledException>(e).Limit.TotalSeconds + " seconds, so no content was returned. Retry the download.", e);
 			}
 			catch (Exception e) when (FindInChain<DownloadTooLargeException>(e) != null)
 			{
@@ -2012,15 +2444,10 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			try
 			{
-				var options = new ListObjectsOptions();
-				if (ssMaxResults > 0) options.PageSize = ssMaxResults;
-				if (!string.IsNullOrEmpty(ssPageToken)) options.PageToken = ssPageToken;
-				if (!string.IsNullOrEmpty(ssDelimiter)) options.Delimiter = ssDelimiter;
-
 				// Iterate the raw API responses (one per HTTP request) so the continuation
 				// token and the common prefixes ("folders") are available, not just the items.
 				var seenPrefixes = new HashSet<string>();
-				foreach (var page in storageClient.ListObjects(ssBucketName, ssPrefix, options).AsRawResponses())
+				foreach (var page in ListObjectPages(storageClient, ssBucketName, ssPrefix, ssMaxResults, ssPageToken, ssDelimiter))
 				{
 					if (page.Items != null)
 					{
@@ -2056,6 +2483,29 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, null); }
 		} // MssObject_List
+
+		/// <summary>
+		/// Lists objects one page (one HTTP request) at a time, following the continuation token. Each page
+		/// is requested on its own, so a network failure repeats that page only, not the whole listing.
+		/// pageSize 0 leaves the page size to Google (1,000 objects).
+		/// </summary>
+		private static IEnumerable<Google.Apis.Storage.v1.Data.Objects> ListObjectPages(StorageClient storageClient, string bucketName, string prefix, int pageSize, string pageToken, string delimiter)
+		{
+			string token = string.IsNullOrEmpty(pageToken) ? null : pageToken;
+			do
+			{
+				var options = new ListObjectsOptions();
+				if (pageSize > 0) options.PageSize = pageSize;
+				if (token != null) options.PageToken = token;
+				if (!string.IsNullOrEmpty(delimiter)) options.Delimiter = delimiter;
+
+				var page = WithNetworkRetry(() => storageClient.ListObjects(bucketName, prefix, options).AsRawResponses().FirstOrDefault());
+				if (page == null) yield break;
+				yield return page;
+				token = string.IsNullOrEmpty(page.NextPageToken) ? null : page.NextPageToken;
+			}
+			while (token != null);
+		}
 
 	} // CssGoogleCloudStorage_ext
 
