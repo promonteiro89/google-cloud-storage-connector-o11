@@ -87,7 +87,7 @@ if (-not $SkipEmulator -and $Category -ne "Live") {
             $actual = (Get-FileHash -Path $tgz -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($actual -ne $sha256) {
                 Remove-Item $tgz
-                throw "fake-gcs-server v$version: the downloaded archive's SHA-256 is $actual, expected $sha256. Nothing was extracted or run."
+                throw "fake-gcs-server v${version}: the downloaded archive's SHA-256 is $actual, expected $sha256. Nothing was extracted or run."
             }
             tar -xzf $tgz -C $tools fake-gcs-server.exe
             Remove-Item $tgz
