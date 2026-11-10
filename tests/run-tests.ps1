@@ -78,10 +78,17 @@ if (-not $SkipEmulator -and $Category -ne "Live") {
     if (-not (Test-Path $EmulatorExe)) {
         if ($Download) {
             $version = '1.54.0'
+            # SHA-256 of the Windows archive, from the release's own checksums.txt. Update both together.
+            $sha256 = 'e1c5f11fad5fd31406a940993b1dad4cbb805f0ca5dbaec76522e432a8fa8906'
             $url = "https://github.com/fsouza/fake-gcs-server/releases/download/v$version/fake-gcs-server_${version}_Windows_amd64.tar.gz"
             $tgz = Join-Path $tools 'fake-gcs-server.tar.gz'
             Write-Host "Downloading fake-gcs-server v$version from official GitHub releases..."
             Invoke-WebRequest -Uri $url -OutFile $tgz
+            $actual = (Get-FileHash -Path $tgz -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $sha256) {
+                Remove-Item $tgz
+                throw "fake-gcs-server v${version}: the downloaded archive's SHA-256 is $actual, expected $sha256. Nothing was extracted or run."
+            }
             tar -xzf $tgz -C $tools fake-gcs-server.exe
             Remove-Item $tgz
             Write-Host "Saved to $EmulatorExe"
@@ -107,7 +114,7 @@ if (-not $SkipEmulator -and $Category -ne "Live") {
 }
 
 # --- Test harness (compiled against the real extension DLL, .NET Framework 4.8) ------
-$sources = @("TestHarness.cs", "FederationTests.cs", "CacheIsolationTests.cs", "RegressionTests.cs", "SafetyTests.cs", "RetryTests.cs", "LiveFederationTests.cs") | ForEach-Object { Join-Path $testsDir $_ }
+$sources = @("TestHarness.cs", "FederationTests.cs", "CacheIsolationTests.cs", "RegressionTests.cs", "SafetyTests.cs", "RetryTests.cs", "HardeningTests.cs", "LiveFederationTests.cs") | ForEach-Object { Join-Path $testsDir $_ }
 $refs = @($extDll, $osrtDll) + (@("Google.Apis.dll", "Google.Apis.Core.dll", "Google.Apis.Auth.dll", "Newtonsoft.Json.dll") | ForEach-Object { Join-Path $bin $_ }) +
         @("System.dll", "System.Core.dll", "System.Net.Http.dll")
 

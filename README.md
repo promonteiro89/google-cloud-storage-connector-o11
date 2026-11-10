@@ -22,6 +22,7 @@ An Integration Studio extension (.NET Framework 4.8) that gives OutSystems 11 ap
 - [Best Practices](#best-practices)
 - [Contributing](#contributing)
 - [License](#license)
+- [Third-party components](#third-party-components)
 
 ---
 
@@ -78,7 +79,7 @@ Every action takes one mandatory `Authentication` input, a `GCS_Authentication` 
 
 Before 1.6.0 the actions took flat `ProjectId`, `ClientEmail` and `PrivateKey` inputs. The [CHANGELOG](CHANGELOG.md) has the migration steps.
 
-Store `PrivateKey` and `ClientSecret` encrypted (for example in an encrypted Site Property or database value). Don't hard-code them or write them to logs.
+Keep `PrivateKey` and `ClientSecret` out of the module's code and out of logs. A Site Property is not encrypted: its value is stored as plain text and anyone with access to Service Center can read it. Store the secrets encrypted in the database, or read them from a secrets manager, and decrypt them just before the call.
 
 ### Workload Identity Federation
 
@@ -95,12 +96,12 @@ Any OIDC identity provider that issues signed JWTs (RS256/ES256) works, for exam
 | `AuthenticationMethod` | `WorkloadIdentityFederation` |
 | `ProjectId` | Your Google Cloud project ID (used by `Bucket_List` / `Bucket_Create`) |
 | `WorkloadIdentityProvider` | `//iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER` (the `https://iam.googleapis.com/...` and `projects/...` forms are also accepted) |
-| `ServiceAccountEmail` | The service account the extension acts as |
-| `TokenEndpoint` | Your identity provider's OAuth 2.0 token endpoint. Must be `https://`, without a `user:password@` part. Redirects aren't followed, so use the final token URL |
+| `ServiceAccountEmail` | The service account the extension acts as. Letters, digits and `@ . - _ +` only |
+| `TokenEndpoint` | Your identity provider's OAuth 2.0 token endpoint. Must be `https://`, without a `user:password@` part. Redirects aren't followed, so use the final token URL. The provider has 30 seconds to answer |
 | `ClientId` / `ClientSecret` | Your app registration at the identity provider |
 | `Scope` | Optional `scope` for the token request |
 | `Audience` | Optional `audience` for the token request (some providers require it) |
-| `SubjectToken` | Optional JWT you obtained yourself. When set, `TokenEndpoint`, `ClientId` and `ClientSecret` are not needed. Each token gets its own cached credentials, which expire at the token's `exp`; an already-expired token is rejected before anything is sent to Google |
+| `SubjectToken` | Optional JWT you obtained yourself. When set, `TokenEndpoint`, `ClientId` and `ClientSecret` are not needed. Each token gets its own cached credentials, which expire at the token's `exp`. A value that isn't a JWT (three base64url parts separated by dots, at most 32,768 characters, no `Bearer ` prefix), or whose `exp` passed more than 30 seconds ago (the allowance for clock difference), is rejected before anything is cached or sent to Google |
 
 Client authentication uses `client_secret_post`. If the provider rejects the client (`invalid_client`), the extension retries once with HTTP Basic (`client_secret_basic`) and keeps using whichever worked.
 
@@ -157,7 +158,13 @@ Set these in the `GCS_Authentication` record, with `AuthenticationMethod` empty 
 
 Every action's first input is `Authentication` (a `GCS_Authentication` record, see [Authentication](#authentication)). It is listed once here rather than in each table.
 
-An empty bucket or object name is rejected with an "is required" error before anything is sent to Google.
+An empty bucket or object name is rejected with an "is required" error before anything is sent to Google. So is a bucket name with characters Google doesn't allow (uppercase letters, spaces, line breaks), with an "is not a valid bucket name" error.
+
+### Retries and time limits
+
+- Google's 408, 429, 500, 502, 503 and 504 answers and network failures (a reset connection, DNS, TLS) are repeated, up to 3 attempts, on every action. An unconditional write is never repeated blindly: see `Object_Delete`, `Object_Move`, `Object_UpdateMetadata`, `Bucket_Create` and `Bucket_Delete`.
+- Each Storage request has 100 seconds to answer, including any sign-in it needs first, and the identity provider has 30 seconds. A Storage request that times out is not repeated. Within that time, Google's library repeats a slow sign-in request by itself (it allows the first attempt 12 seconds).
+- There is no time limit on a whole action, because the caller's own limit differs too much (a screen request is cut off long before a timer is). An action that makes several requests can therefore outlast the caller: a first call with Workload Identity Federation signs in at the identity provider, at Google's token service and at the IAM Credentials API before the Storage request, and `Object_Copy` or `Object_Move` of a large object between locations or storage classes takes several requests, each of which can run for a while. Run long operations from a timer.
 
 ### Object Operations
 
@@ -169,10 +176,10 @@ Uploads binary content to a bucket. Overwrites the object if it already exists.
 | `BucketName` | In | Text | Destination bucket |
 | `ObjectName` | In | Text | Full path and name in the bucket |
 | `Content` | In | Binary Data | File content |
-| `ContentType` | In | Text | MIME type, e.g. `application/pdf`. Must not contain line breaks |
+| `ContentType` | In | Text | MIME type, e.g. `application/pdf`. Printable ASCII only: no line breaks, control characters or accented letters |
 | `Metadata` | In | List of `GCS_MetadataEntry` | Optional custom key-value metadata to store with the object |
 
-A transient Google error (408, 429, 5xx, a dropped connection) repeats the whole upload, up to 3 attempts, about 1 and then 2 seconds apart. Repeating is safe because the same bytes are written again. Timeouts are not repeated.
+A transient Google error (408, 429, 500, 502, 503, 504, or a dropped connection) repeats the whole upload, up to 3 attempts, about 1 and then 2 seconds apart. Repeating is safe because the same bytes are written again. Timeouts are not repeated.
 
 The upload carries a CRC32C checksum of `Content`. If the data Google receives doesn't match, the action fails with an "Upload rejected by Google Cloud Storage ... retry the upload" error, nothing is stored, and any existing object with that name is left unchanged.
 
@@ -186,9 +193,13 @@ Downloads an object's content and content type.
 | `Content` | Out | Binary Data | File content |
 | `ContentType` | Out | Text | Stored MIME type |
 
-The download is checked against the object's stored checksum; a mismatch fails with a "did not match the object's checksum ... retry" error and returns no content. An object stored with `Content-Encoding: gzip` comes back decompressed, as its original bytes.
+The download is checked against the object's stored checksum; a mismatch fails with a "did not match the object's checksum ... retry" error and returns no content. An object stored with `Content-Encoding: gzip` comes back decompressed, as its original bytes, and is the one case that is not checked: the stored checksum is of the compressed bytes.
 
-A transient Google error, a dropped connection or a checksum mismatch repeats the download, up to 3 attempts, about 1 and then 2 seconds apart. Timeouts are not repeated. `Content` is held in the server's memory, so large objects can exhaust it well before the hard limit of about 2 GB, which fails with an error saying so. For large objects, give the client a signed URL instead (`Object_GetSignedUrl`, Operation `Download`).
+The action reads the object's size first (one extra request per download). An object over the limit is refused before any content is transferred, and the memory for the content is allocated once, at its final size.
+
+A transient Google error, a dropped connection or a checksum mismatch repeats the download, up to 3 attempts, about 1 and then 2 seconds apart. Timeouts are not repeated. If Google stops sending data for 60 seconds in the middle of a download, the action fails with a "stalled" error instead of waiting; a slow download that keeps receiving data is not cut off.
+
+`Content` is held in the server's memory, so large objects can exhaust it well before the hard limit of about 2 GB, which fails with an error saying so. For large objects, give the client a signed URL instead (`Object_GetSignedUrl`, Operation `Download`).
 
 #### `Object_List`
 Lists objects in a bucket, optionally filtered by prefix, with pagination and folder-style listing.
@@ -197,7 +208,7 @@ Lists objects in a bucket, optionally filtered by prefix, with pagination and fo
 |---|---|---|---|
 | `BucketName` | In | Text | Bucket to list |
 | `Prefix` | In | Text | Optional: only objects whose names start with this |
-| `MaxResults` | In | Integer | Results per call: objects plus `PrefixList` entries together. Google returns at most 1,000 per call, so a larger value still returns up to 1,000, with `NextPageToken` set when more exist. `0` (default) returns everything in one call; negative values are rejected |
+| `MaxResults` | In | Integer | Results per call: objects plus `PrefixList` entries together. Google returns at most 1,000 per call, so a larger value still returns up to 1,000, with `NextPageToken` set when more exist. `0` (default) returns everything in one call, however many objects match: on a large bucket that takes one request per 1,000 objects, with no limit on time or memory, so pass a `MaxResults` and page there. Negative values are rejected |
 | `PageToken` | In | Text | `NextPageToken` from the previous call; empty for the first page |
 | `Delimiter` | In | Text | Usually `/`. Objects in deeper "folders" are returned as `PrefixList` entries instead. Empty lists recursively |
 | `ObjectList` | Out | List of `GCS_Object` | The objects found |
@@ -245,14 +256,14 @@ Deletes every object whose name starts with the prefix: a "folder" and everythin
 | `Prefix` | In | Text | Required and not blank, so a call can't empty the whole bucket. E.g. `uploads/2025/` |
 | `DeletedCount` | Out | Long Integer | Number of objects deleted |
 
-Each object is deleted only if it is still the version that was listed: an object replaced after the listing is left in place and not counted. Transient Google errors are retried automatically. If a delete still fails partway through, the error says how many objects were already deleted.
+Each object is deleted only if it is still the version that was listed: an object replaced after the listing is left in place and not counted, and so is one that someone else deleted in the meantime. Transient Google errors and network failures are retried, for the listing and for each delete. If a delete still fails partway through, the error says how many objects were already deleted; `DeletedCount` is not returned in that case.
 
-The action lists every matching object first, then deletes them one at a time. A very large prefix (tens of thousands of objects) can outlast the action's timeout; run it again to delete the rest. `DeletedCount` can be one lower than the objects actually removed when a retried delete finds its object already gone. Deletion is permanent only on buckets without Object Versioning or soft delete; see `Object_Delete`.
+The action lists every matching object first, then deletes them one at a time. A very large prefix (tens of thousands of objects) can outlast the caller's timeout; run it again to delete the rest. Deletion is permanent only on buckets without Object Versioning or soft delete; see `Object_Delete`.
 
 #### `Object_Delete`
 Deletes an object. Deleting an object that doesn't exist raises an "Object ... was not found" error.
 
-The action reads the object's generation first and deletes that generation, so transient Google errors are retried (one extra request per call, using `storage.objects.get`). If another request replaces the object in between, the new generation is read and the delete repeated, up to 3 times. With a role that can delete but not read objects, the object is deleted without the read and without retries. If a repeated request (after a network error) finds the generation no longer current, the earlier request is taken to have deleted it, and a newer object written in the meantime is left in place.
+The action reads the object's generation first and deletes that generation, so transient Google errors are retried (one extra request per call, using `storage.objects.get`). If another request replaces the object in between, the new generation is read and the delete repeated, up to 3 times. With a role that can delete but not read objects, the object is deleted without the read and without retries. If a request that is repeated after a lost answer or a 500, 502, 503 or 504 finds the generation no longer current, the earlier request is taken to have deleted it, and a newer object written in the meantime is left in place. After a 408 or 429, which mean Google refused the request, the object is read again as usual.
 
 Whether the data can be recovered depends on the bucket: with Object Versioning on, the deleted object is kept as a noncurrent version, and with soft delete on (Google's default for new buckets, 7 days), it can be restored until the retention period ends. Only without both is the deletion permanent.
 
@@ -262,7 +273,7 @@ Whether the data can be recovered depends on the bucket: with Object Versioning 
 | `ObjectName` | In | Text | Full path and name |
 
 #### `Object_Copy`
-Copies an object within a bucket or to another bucket, without downloading it. Overwrites the destination if it exists. If the copy fails because something is missing, the error names the missing source object or destination bucket.
+Copies an object within a bucket or to another bucket, without downloading it. Overwrites the destination if it exists. If the copy fails because something is missing, the error names the missing source object or destination bucket. A large object copied to another location or storage class is copied by Google in several steps and can take minutes; see [Retries and time limits](#retries-and-time-limits).
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
@@ -288,14 +299,18 @@ Creates a time-limited V4 signed URL that lets a browser or other client read, w
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
-| `Operation` | In | Text | Required: `Download` (GET), `Upload` (PUT) or `Delete` (DELETE), case-insensitive |
+| `Operation` | In | Text | `Download` (GET), `Upload` (PUT) or `Delete` (DELETE), case-insensitive. Optional in Service Studio, where it defaults to `Download`; an empty text is rejected |
 | `BucketName` | In | Text | Bucket |
 | `ObjectName` | In | Text | Required: full path and name (an empty name would sign a URL for the whole bucket) |
-| `ExpirationMinutes` | In | Integer | How long the URL is valid: 1 to 10080 minutes (7 days, the V4 maximum) |
-| `ContentType` | In | Text | Optional, `Upload` only: the exact `Content-Type` the client will send. It becomes part of the signature, so an upload with a different type is rejected. Empty allows any. Ignored for `Download` and `Delete` |
+| `ExpirationMinutes` | In | Integer | How long the URL is valid: 1 to 10080 minutes (7 days, the V4 maximum). With Workload Identity Federation, use 720 (12 hours) or less; see below |
+| `ContentType` | In | Text | Optional, `Upload` only: the exact `Content-Type` the client will send. It becomes part of the signature, so an upload with a different type is rejected. Empty allows any. Printable ASCII only. Ignored for `Download` and `Delete` |
 | `URL` | Out | Text | The signed URL. For `Upload`, the client sends an HTTP PUT with the file as the body |
 
-A signed URL covers one object path, so request one `Upload` URL per file.
+A signed URL covers one object path, so request one `Upload` URL per file. An `Upload` URL doesn't limit the size of what is uploaded, and it overwrites an existing object with that name.
+
+With Workload Identity Federation the URL is signed with a key that Google manages for the service account and rotates. Google's documentation says such a key "may not remain valid after 12 hours", so a URL with a longer `ExpirationMinutes` can stop working before it expires. The action accepts up to 7 days with both methods; with federation, keep it at 720 minutes or less. With a service account key the full 7 days apply.
+
+A browser on another origin (your app's domain) can only use the URL if the bucket's CORS configuration allows that origin and method. The extension doesn't manage CORS; set it once on the bucket, for example with `gcloud storage buckets update gs://MY_BUCKET --cors-file=cors.json`.
 
 The client uses an `Upload` URL directly, without the extension, so `Object_Upload`'s automatic CRC32C check doesn't apply to it. To validate direct uploads end to end, follow Google's [data validation guide](https://cloud.google.com/storage/docs/data-validation) in the client.
 
@@ -318,6 +333,10 @@ Creates a bucket in the project given by `Authentication.ProjectId`.
 | `BucketName` | In | Text | Name; must be unique across all of Google Cloud Storage |
 | `Location` | In | Text | Region or multi-region, e.g. `US`, `EU`, `asia-east1` |
 
+The bucket gets Google's default settings for the project. The action doesn't turn on uniform bucket-level access or public access prevention; set those on the bucket, or enforce them with an organization policy.
+
+If the create request is repeated after a lost answer or a 5xx and Google then reports the name as taken, the action checks whether the bucket was created by the first request (it is readable and was created after the call started, allowing one minute for clock difference) and succeeds if so.
+
 #### `Bucket_Exists`
 Checks whether a bucket exists and the service account can access it, without listing its contents.
 
@@ -334,6 +353,8 @@ Deletes an empty bucket.
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
 | `BucketName` | In | Text | Bucket to delete; it must be empty |
+
+If the delete request is repeated after a lost answer or a 5xx and the bucket is then gone, the first request deleted it and the action succeeds. Deleting a bucket that doesn't exist is still an error.
 
 ---
 
@@ -402,11 +423,14 @@ The OutSystems platform assemblies are not in the repo; they are proprietary and
 - `OutSystems.REST.API.dll`
 - `OutSystems.SOAP.API.dll`
 
-To publish:
+To publish the released extension:
 
-1. Open `Source/NET/GoogleCloudStorage_ext.sln` in Integration Studio.
-2. Run Verify, which compiles the .NET code.
-3. Run 1-Click Publish to publish to your environment.
+1. Download `GoogleCloudStorage_ext.xif` from the [latest release](https://github.com/promonteiro89/google-cloud-storage-connector-o11/releases/latest).
+2. Open the `.xif` in Integration Studio (it opens extension files, not the `.sln`).
+3. Run Verify, which compiles the .NET code.
+4. Run 1-Click Publish to publish to your environment.
+
+To publish your own change, open the `.xif`, choose Edit Source Code, replace the files under the extension's `Source\NET\` folder with the ones from this repository's `Source/NET/`, and then Verify and publish. The `.sln` is for editing and building the code in Visual Studio or with MSBuild.
 
 ---
 
@@ -433,7 +457,7 @@ See [tests/README.md](tests/README.md) for details.
 ## Best Practices
 
 - Use Workload Identity Federation where you can, so there is no long-lived Google key to leak or rotate.
-- Store `PrivateKey` and `ClientSecret` encrypted, for example as an encrypted Site Property. Don't hard-code or log them.
+- Store `PrivateKey` and `ClientSecret` encrypted in the database or in a secrets manager, not in a Site Property, which is plain text. Don't hard-code or log them.
 - For large files, use `Object_GetSignedUrl` so the transfer goes directly between the browser and GCS instead of through the OutSystems server.
 - Bucket names are 3 to 63 characters of lowercase letters, numbers, hyphens (`-`), underscores (`_`) and dots (`.`), and must start and end with a letter or number. Names with dots can be up to 222 characters but need domain-ownership verification; Google recommends avoiding them.
 
@@ -448,3 +472,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, build steps and coding 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+## Third-party components
+
+The extension is distributed with the assemblies it needs, in `Source/NET/Bin/` and inside the `.xif`. Each keeps its own licence: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists them with their versions, and the licence texts are in [licenses/](licenses/).

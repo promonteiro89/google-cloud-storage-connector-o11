@@ -4,7 +4,7 @@
 
 1. Fork the repository and clone your fork.
 2. Copy the OutSystems platform assemblies into `Source/NET/Bin/` (see [Build and Deployment](README.md#build-and-deployment)). They aren't committed because they are proprietary.
-3. Open `Source/NET/GoogleCloudStorage_ext.sln` in Integration Studio, or build with MSBuild:
+3. Open `Source/NET/GoogleCloudStorage_ext.sln` in Visual Studio, or build with MSBuild (Integration Studio opens the `.xif`, not the `.sln`; see [Build and Deployment](README.md#build-and-deployment)):
    ```
    msbuild Source/NET/GoogleCloudStorage_ext.csproj /p:Configuration=Release
    ```
@@ -35,6 +35,7 @@ The third-party DLLs in `Source/NET/Bin/` are committed. When you update one:
 
 - Replace the DLL and its XML in `Bin\`, and update the matching `<Reference>` version in `GoogleCloudStorage_ext.csproj`.
 - Use the `net462` build of `Google.*`, `System.*` and `Microsoft.*` packages, and the `net45` build of `Newtonsoft.Json`.
+- Update the version in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 - List the old and new versions in the pull request.
 
 ## Reporting issues

@@ -211,6 +211,9 @@ public static class GcsExtensionTestSuite
             TestLog.Section("1.7.3: retries, download cap, 404 check, identity provider limits (offline fakes)");
             RetryTests.Run();
 
+            TestLog.Section("1.7.5: repeats that may have been applied, name and header checks, HTTP factory, bucket repeats, download stall guard and size read, network retries (offline fakes)");
+            HardeningTests.Run(email, pem);
+
             TestLog.Section("Signed-URL verifier used by the live job (offline proof)");
             LiveFederationTests.VerifierSelfTest(email, pem);
         }
@@ -358,8 +361,8 @@ public static class GcsExtensionTestSuite
         ext.MssBucket_Exists(Key(proj, email, pem), b1, out exists);
         OK("Bucket_Create + Bucket_Exists -> True", exists);
 
-        try { ext.MssBucket_Create(Key(proj, email, pem), b1, "US"); OK("Duplicate Bucket_Create raises error", false, "no exception"); }
-        catch (Exception ex) { OK("Duplicate Bucket_Create raises error", true, ex.Message); }
+        try { ext.MssBucket_Create(Key(proj, email, pem), b1, "US"); OK("Duplicate Bucket_Create raises 'Conflict: ... the name is already taken'", false, "no exception"); }
+        catch (Exception ex) { OK("Duplicate Bucket_Create raises 'Conflict: ... the name is already taken'", ex.Message.StartsWith("Conflict:", StringComparison.Ordinal) && ex.Message.Contains("name is already taken"), ex.Message); }
 
         ext.MssBucket_Create(Key(proj, email, pem), b2, "EU");
 
@@ -528,14 +531,15 @@ public static class GcsExtensionTestSuite
         OK("Object_Delete removes the object", !exists);
 
         // --- error paths ---
-        try { byte[] c2; string ct2; ext.MssObject_Download(Key(proj, email, pem), b1, "does-not-exist.txt", out c2, out ct2); OK("Download of missing object raises error", false, "no exception"); }
-        catch (Exception ex) { OK("Download of missing object raises error", true, ex.Message); }
+        try { byte[] c2; string ct2; ext.MssObject_Download(Key(proj, email, pem), b1, "does-not-exist.txt", out c2, out ct2); OK("Download of missing object raises \"Object 'does-not-exist.txt' was not found\"", false, "no exception"); }
+        catch (Exception ex) { OK("Download of missing object raises \"Object 'does-not-exist.txt' was not found\"", ex.Message.StartsWith("Object 'does-not-exist.txt' was not found in bucket '" + b1 + "'", StringComparison.Ordinal), ex.Message); }
 
-        try { ext.MssObject_Upload(Key(proj, email, pem), "no-such-bucket-xyz", "f.txt", new byte[] { 1 }, "text/plain", null); OK("Upload to missing bucket raises error", false, "no exception"); }
-        catch (Exception ex) { OK("Upload to missing bucket raises error", true, ex.Message); }
+        try { ext.MssObject_Upload(Key(proj, email, pem), "no-such-bucket-xyz", "f.txt", new byte[] { 1 }, "text/plain", null); OK("Upload to missing bucket raises \"Bucket 'no-such-bucket-xyz' does not exist\"", false, "no exception"); }
+        catch (Exception ex) { OK("Upload to missing bucket raises \"Bucket 'no-such-bucket-xyz' does not exist\"", ex.Message.StartsWith("Bucket 'no-such-bucket-xyz' does not exist", StringComparison.Ordinal), ex.Message); }
 
-        try { ext.MssBucket_Delete(Key(proj, email, pem), b1); OK("Bucket_Delete on non-empty bucket raises error", false, "no exception"); }
-        catch (Exception ex) { OK("Bucket_Delete on non-empty bucket raises error", true, ex.Message); }
+        try { ext.MssBucket_Delete(Key(proj, email, pem), b1); OK("Bucket_Delete on non-empty bucket raises an error about the bucket not being empty", false, "no exception"); }
+        // Google answers 409 "The bucket you tried to delete is not empty."; the emulator answers 412 "bucket must be empty prior to deletion".
+        catch (Exception ex) { OK("Bucket_Delete on non-empty bucket raises an error about the bucket not being empty", ex.Message.IndexOf("empty", StringComparison.OrdinalIgnoreCase) >= 0, ex.Message); }
 
         // --- custom metadata (v1.5.0) ---
         ext.MssObject_Upload(Key(proj, email, pem), b1, "meta/tagged.txt", Encoding.UTF8.GetBytes("tagged"), "text/plain",
@@ -599,9 +603,9 @@ public static class GcsExtensionTestSuite
         try
         {
             ext.MssObject_UpdateMetadata(Key(proj, email, pem), b1, "meta/missing.txt", "text/plain", "", "", "", null);
-            OK("UpdateMetadata on missing object raises error", false, "no exception");
+            OK("UpdateMetadata on missing object raises \"Object 'meta/missing.txt' was not found\"", false, "no exception");
         }
-        catch (Exception ex) { OK("UpdateMetadata on missing object raises error", true, ex.Message); }
+        catch (Exception ex) { OK("UpdateMetadata on missing object raises \"Object 'meta/missing.txt' was not found\"", ex.Message.StartsWith("Object 'meta/missing.txt' was not found", StringComparison.Ordinal), ex.Message); }
 
         // --- delete by prefix (v1.5.0) ---
         // A sibling folder sharing the stem ("uploads/2024/" vs "uploads/2025/") must survive.
