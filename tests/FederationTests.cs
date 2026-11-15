@@ -632,6 +632,9 @@ public static class FederationTests
         var sts = _backend.To("sts.googleapis.com");
         var imp = _backend.To(":generateAccessToken");
         var storage = _backend.To("storage.googleapis.com");
+        Newtonsoft.Json.Linq.JArray impersonatedScopes = imp.Count == 1
+            ? Newtonsoft.Json.Linq.JObject.Parse(imp[0].Body)["scope"] as Newtonsoft.Json.Linq.JArray
+            : null;
         string saEmail = a.ssSTGCS_Authentication.ssServiceAccountEmail;
 
         TestLog.Check("Client credentials flow: bucket reported as existing", exists);
@@ -645,6 +648,10 @@ public static class FederationTests
         TestLog.Check("  3) IAM Credentials: impersonates the service account with the federated token",
             imp.Count == 1 && (Has(imp[0].Uri.ToString(), saEmail) || Has(imp[0].Uri.AbsoluteUri, Uri.EscapeDataString(saEmail)))
             && imp[0].Authorization == "Bearer " + FakeFederationBackend.StsToken, imp.Count == 1 ? imp[0].Uri + " / " + imp[0].Authorization : imp.Count + " requests");
+        TestLog.Check("  3a) IAM Credentials receives exactly the Storage impersonation scope",
+            impersonatedScopes != null && impersonatedScopes.Count == 1
+            && (string)impersonatedScopes[0] == "https://www.googleapis.com/auth/devstorage.full_control",
+            imp.Count == 1 ? imp[0].Body : imp.Count + " generateAccessToken requests");
         TestLog.Check("  4) Storage is called with the short-lived service account token, never a key",
             storage.Count == 1 && storage[0].Authorization == "Bearer " + FakeFederationBackend.ServiceAccountToken, storage.Count == 1 ? storage[0].Authorization : storage.Count + " requests");
 

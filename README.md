@@ -258,7 +258,7 @@ Deletes every object whose name starts with the prefix: a "folder" and everythin
 
 Each object is deleted only if it is still the version that was listed: an object replaced after the listing is left in place and not counted, and so is one that someone else deleted in the meantime. Transient Google errors and network failures are retried, for the listing and for each delete. If a delete still fails partway through, the error says how many objects were already deleted; `DeletedCount` is not returned in that case.
 
-The action lists every matching object first, then deletes them one at a time. A very large prefix (tens of thousands of objects) can outlast the caller's timeout; run it again to delete the rest. Deletion is permanent only on buckets without Object Versioning or soft delete; see `Object_Delete`.
+The action lists the matching objects one page (up to 1,000) at a time and deletes each page before listing the next, so memory holds at most one page. A very large prefix (tens of thousands of objects) can outlast the caller's timeout; run it again to delete the rest. If it fails partway, the error says how many objects were already deleted. Deletion is permanent only on buckets without Object Versioning or soft delete; see `Object_Delete`.
 
 #### `Object_Delete`
 Deletes an object. Deleting an object that doesn't exist raises an "Object ... was not found" error.
