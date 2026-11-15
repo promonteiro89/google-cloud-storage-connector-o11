@@ -102,50 +102,54 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 
-			// Materialize the names first so deletions can't interfere with listing pagination. Each
-			// object's generation is kept: deleting with it as a precondition makes a repeat after a
-			// transient error safe (an unconditional delete is never repeated), and leaves alone an object
-			// that was replaced after the listing.
-			var objects = new List<KeyValuePair<string, long?>>();
-			try
+			long deleted = 0;
+			// Delete each page before requesting the next one. GCS page tokens continue from the last
+			// name listed, so deleting already-listed objects does not skip or repeat any. Each object's
+			// generation is kept: the precondition makes a repeat after a transient error safe and leaves
+			// alone an object that was replaced after the listing. Memory holds at most one page.
+			using (var pages = ListObjectPages(storageClient, ssBucketName, ssPrefix, 0, null, null).GetEnumerator())
 			{
-				foreach (var page in ListObjectPages(storageClient, ssBucketName, ssPrefix, 0, null, null))
+				while (true)
 				{
+					bool more;
+					try { more = pages.MoveNext(); }
+					catch (Exception e) when (IsTranslatable(e))
+					{
+						if (deleted == 0) throw TranslateException(e, auth, ssBucketName, null);
+						throw new Exception("Deleted " + deleted + " object(s) under prefix '" + SafeName(ssPrefix) + "', then listing the next page failed: " + TranslateException(e, auth, ssBucketName, null).Message, e);
+					}
+					if (!more) break;
+					var page = pages.Current;
 					if (page.Items == null) continue;
 					foreach (var obj in page.Items)
-						objects.Add(new KeyValuePair<string, long?>(obj.Name, obj.Generation));
-				}
-			}
-			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, null); }
-
-			long deleted = 0;
-			foreach (var item in objects)
-			{
-				string name = item.Key;
-				var resent = new System.Runtime.CompilerServices.StrongBox<bool>();
-				try
-				{
-					SendGuarded(() => storageClient.DeleteObject(ssBucketName, name, new DeleteObjectOptions { IfGenerationMatch = item.Value, RetryOptions = RetryOptions.Never }), resent);
-					deleted++;
-				}
-				catch (Google.GoogleApiException e) when (resent.Value && (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound || e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed))
-				{
-					// The listed generation was deleted by an earlier send of this request whose response was lost.
-					deleted++;
-				}
-				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
-				{
-					// Already gone (deleted concurrently) - the desired state is reached, keep going.
-				}
-				catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
-				{
-					// Replaced after the listing: newer data than what was listed, so it is left in place and not counted.
-				}
-				catch (Exception e) when (IsTranslatable(e))
-				{
-					// TranslateException gives the same message a whole-object call would give, so the
-					// partial-progress error carries an actionable cause instead of Google's raw text.
-					throw new Exception("Deleted " + deleted + " of " + objects.Count + " objects under prefix '" + SafeName(ssPrefix) + "', then failed on '" + SafeName(name) + "': " + TranslateException(e, auth, ssBucketName, name, storageClient).Message, e);
+					{
+						string name = obj.Name;
+						var generation = obj.Generation;
+						var resent = new System.Runtime.CompilerServices.StrongBox<bool>();
+						try
+						{
+							SendGuarded(() => storageClient.DeleteObject(ssBucketName, name, new DeleteObjectOptions { IfGenerationMatch = generation, RetryOptions = RetryOptions.Never }), resent);
+							deleted++;
+						}
+						catch (Google.GoogleApiException e) when (resent.Value && (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound || e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed))
+						{
+							// The listed generation was deleted by an earlier send of this request whose response was lost.
+							deleted++;
+						}
+						catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
+						{
+							// Already gone (deleted concurrently) - the desired state is reached, keep going.
+						}
+						catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+						{
+							// Replaced after the listing: newer data than what was listed, so it is left in place and not counted.
+						}
+						catch (Exception e) when (IsTranslatable(e))
+						{
+							// TranslateException gives the same message a whole-object call would give, with progress.
+							throw new Exception("Deleted " + deleted + " object(s) under prefix '" + SafeName(ssPrefix) + "', then failed on '" + SafeName(name) + "': " + TranslateException(e, auth, ssBucketName, name, storageClient).Message, e);
+						}
+					}
 				}
 			}
 
@@ -1240,7 +1244,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			{
 				var initializer = new ServiceAccountCredential.Initializer(a.ClientEmail)
 				{
-					Scopes = new[] { StorageService.Scope.CloudPlatform },
+					// The token is used only for Cloud Storage, so it is limited to devstorage.full_control.
+					Scopes = new[] { StorageService.Scope.DevstorageFullControl },
 					// The token request to Google goes through the same certificate-checking factory.
 					HttpClientFactory = GoogleHttpClientFactory
 				}.FromPrivateKey(a.PrivateKey.Replace("\\n", "\n"));
@@ -1419,6 +1424,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			var externalInitializer = new ProgrammaticExternalAccountCredential.Initializer(
 				StsTokenUrl, NormalizeWorkloadIdentityProvider(a.WorkloadIdentityProvider), JwtSubjectTokenType, tokenSource)
 			{
+				// The external-account source calls IAM Credentials (generateAccessToken; signBlob uses its source re-scoped to auth/iam), so it keeps cloud-platform.
 				Scopes = new[] { StorageService.Scope.CloudPlatform },
 				HttpClientFactory = GoogleHttpClientFactory
 			};
@@ -1426,7 +1432,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 			var impersonationInitializer = new ImpersonatedCredential.Initializer(a.ServiceAccountEmail.Trim())
 			{
-				Scopes = new[] { StorageService.Scope.CloudPlatform },
+				// The token is used only for Cloud Storage, so it is limited to devstorage.full_control.
+				Scopes = new[] { StorageService.Scope.DevstorageFullControl },
 				HttpClientFactory = GoogleHttpClientFactory
 			};
 

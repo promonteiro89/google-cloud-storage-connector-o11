@@ -2,6 +2,20 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.7.6] - 2026-11-15
+
+The two items deferred from the review of 1.7.4. No action, input or output changes: a drop-in replacement for 1.7.5.
+
+### Changed
+
+- The access token the extension gets for Cloud Storage is limited to Storage (`devstorage.full_control`) instead of all of Google Cloud (`cloud-platform`), with a service account key and with Workload Identity Federation. A token held in server memory, or in a memory dump, can no longer be used for other Google Cloud APIs the service account has roles for. With Workload Identity Federation, the federated token that impersonates the service account keeps `cloud-platform`, because it calls the IAM Credentials API; signed URLs are signed through it (Google re-scopes it to `auth/iam`), so they are not affected.
+- `Object_DeleteByPrefix` deletes each page of the listing (up to 1,000 objects) before listing the next, instead of listing every matching object first. Memory now holds at most one page, so a prefix with millions of objects no longer needs memory for all their names. This is safe because Google's page token continues from the last name listed.
+- `Object_DeleteByPrefix` errors after partial progress read "Deleted N object(s) under prefix '...', then failed on '...'" (the total is no longer known up front), and a failure while listing a later page now says how many objects were already deleted. A failure before any delete is reported as before.
+
+### Tests
+
+- The key sign-in JWT and the impersonation request carry exactly the Storage scope; `Object_DeleteByPrefix` deletes page 1 before requesting page 2; a listing failure after deletes reports the progress, and one before any delete doesn't. Each change was removed in a copy of the code to confirm that a test then fails.
+
 ## [1.7.5] - 2026-11-10
 
 Hardening release from five independent reviews of 1.7.4 and from the review of the ODC connector, whose findings were checked against this code. No action, input or output changes: a drop-in replacement for 1.7.4. Some invalid inputs that used to reach Google, or fail deep inside .NET, are now rejected up front (see "Input checks"), and `Object_Download` makes one extra request.

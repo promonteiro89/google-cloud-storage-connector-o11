@@ -46,6 +46,9 @@ public static class HardeningTests
             NetworkRetries();
             TransientStatuses();
             DeleteByPrefixRepeats();
+            DeleteByPrefixInterleavesPages();
+            DeleteByPrefixListingFailsAfterProgress();
+            DeleteByPrefixListingFailsBeforeProgress();
             SignedUrlRepeat();
             FederationInputs();
             SecretWireForm();
@@ -442,9 +445,10 @@ public static class HardeningTests
             payload += new string('=', (4 - payload.Length % 4) % 4);
             claims = JsonConvert.DeserializeObject<Dictionary<string, object>>(Encoding.UTF8.GetString(Convert.FromBase64String(payload)));
         }
-        TestLog.Check("Key sign-in: the request reaches the test seam, carrying a JWT signed with the key (iss and sub = ClientEmail, scope cloud-platform), with no token request to Google",
+        TestLog.Check("Key sign-in: the request reaches the test seam, carrying a JWT signed with the key (iss and sub = ClientEmail, scope devstorage.full_control), with no token request to Google",
             ex == null && exists && claims != null && (string)claims["iss"] == email && (string)claims["sub"] == email
-            && Has((string)claims["scope"], "https://www.googleapis.com/auth/cloud-platform") && Count(backend, IsGoogleTokenEndpoint) == 0 && Total(backend) == 1,
+            && Has((string)claims["scope"], "https://www.googleapis.com/auth/devstorage.full_control")
+            && !Has((string)claims["scope"], "cloud-platform") && Count(backend, IsGoogleTokenEndpoint) == 0 && Total(backend) == 1,
             Detail(ex, backend) + "; claims=" + (claims == null ? "none" : string.Join(",", claims.Keys)));
 
         backend = NewBackend(r => IsMetaGet(r) ? GoogleError(401, "Invalid Credentials") : null);
@@ -986,9 +990,85 @@ public static class HardeningTests
             return IsDelete(r) ? NoContent() : null;
         });
         ex = Throws(() => Ext().MssObject_DeleteByPrefix(Auth(), "my-bucket", "p/", out deleted));
-        TestLog.Check("DeleteByPrefix: a network failure on all 3 attempts for the second object fails with \"Deleted 1 of 3 objects under prefix 'p/', then failed on 'p/b.txt'\"",
-            ex != null && ex.Message.StartsWith("Deleted 1 of 3 objects under prefix 'p/', then failed on 'p/b.txt': Could not reach Google Cloud", StringComparison.Ordinal)
+        TestLog.Check("DeleteByPrefix: a network failure on all 3 attempts for the second object fails with progress and the object name",
+            ex != null && ex.Message.StartsWith("Deleted 1 object(s) under prefix 'p/', then failed on 'p/b.txt': Could not reach Google Cloud", StringComparison.Ordinal)
             && Count(backend, r => IsDelete(r) && nameOf(r) == "p/b.txt") == 3, Detail(ex, backend));
+    }
+
+    private static void DeleteByPrefixInterleavesPages()
+    {
+        var backend = NewBackend(r =>
+        {
+            if (IsList(r))
+            {
+                if (Query(r.Uri, "pageToken") == "t2")
+                    return Json(new { kind = "storage#objects", items = new[] { new { kind = "storage#object", name = "p/c.txt", bucket = "my-bucket", generation = "13" } } });
+                return Json(new
+                {
+                    kind = "storage#objects",
+                    items = new[]
+                    {
+                        new { kind = "storage#object", name = "p/a.txt", bucket = "my-bucket", generation = "11" },
+                        new { kind = "storage#object", name = "p/b.txt", bucket = "my-bucket", generation = "12" }
+                    },
+                    nextPageToken = "t2"
+                });
+            }
+            return IsDelete(r) ? NoContent() : null;
+        });
+        long deleted = -1;
+        var ex = Throws(() => Ext().MssObject_DeleteByPrefix(Auth(), "my-bucket", "p/", out deleted));
+        Func<Rec, string> nameOf = r => Uri.UnescapeDataString(Segments(r)[5]);
+        var ordered = backend.Requests.Where(r => IsList(r) || IsDelete(r)).ToList();
+        bool order = ordered.Count == 5
+            && IsList(ordered[0]) && Query(ordered[0].Uri, "pageToken") == null
+            && IsDelete(ordered[1]) && nameOf(ordered[1]) == "p/a.txt"
+            && IsDelete(ordered[2]) && nameOf(ordered[2]) == "p/b.txt"
+            && IsList(ordered[3]) && Query(ordered[3].Uri, "pageToken") == "t2"
+            && IsDelete(ordered[4]) && nameOf(ordered[4]) == "p/c.txt";
+        TestLog.Check("DeleteByPrefix: page 1 is deleted before the next LIST (then page 2 is deleted)",
+            ex == null && deleted == 3 && order, Detail(ex, backend) + "; deleted=" + deleted);
+    }
+
+    private static void DeleteByPrefixListingFailsAfterProgress()
+    {
+        var backend = NewBackend(r =>
+        {
+            if (IsList(r) && Query(r.Uri, "pageToken") == "t2") throw new HttpRequestException("The connection was reset");
+            if (IsList(r))
+                return Json(new
+                {
+                    kind = "storage#objects",
+                    items = new[]
+                    {
+                        new { kind = "storage#object", name = "p/a.txt", bucket = "my-bucket", generation = "11" },
+                        new { kind = "storage#object", name = "p/b.txt", bucket = "my-bucket", generation = "12" }
+                    },
+                    nextPageToken = "t2"
+                });
+            return IsDelete(r) ? NoContent() : null;
+        });
+        long deleted = -1;
+        var ex = Throws(() => Ext().MssObject_DeleteByPrefix(Auth(), "my-bucket", "p/", out deleted));
+        Func<Rec, string> nameOf = r => Uri.UnescapeDataString(Segments(r)[5]);
+        TestLog.Check("DeleteByPrefix: a next-page listing failure reports the two completed deletes",
+            ex != null && ex.Message.StartsWith("Deleted 2 object(s) under prefix 'p/', then listing the next page failed: Could not reach Google Cloud", StringComparison.Ordinal)
+            && Count(backend, r => IsDelete(r) && nameOf(r) == "p/a.txt") == 1
+            && Count(backend, r => IsDelete(r) && nameOf(r) == "p/b.txt") == 1, Detail(ex, backend));
+    }
+
+    private static void DeleteByPrefixListingFailsBeforeProgress()
+    {
+        var backend = NewBackend(r =>
+        {
+            if (IsList(r)) throw new HttpRequestException("The connection was reset");
+            return null;
+        });
+        long deleted = -1;
+        var ex = Throws(() => Ext().MssObject_DeleteByPrefix(Auth(), "my-bucket", "p/", out deleted));
+        TestLog.Check("DeleteByPrefix: a first-page listing failure has no progress prefix and sends no DELETE",
+            ex != null && ex.Message.StartsWith("Could not reach Google Cloud", StringComparison.Ordinal)
+            && !ex.Message.StartsWith("Deleted", StringComparison.Ordinal) && Count(backend, IsDelete) == 0, Detail(ex, backend));
     }
 
     // ---- 13. Signing through signBlob is repeated on a transient failure -------------------------------
