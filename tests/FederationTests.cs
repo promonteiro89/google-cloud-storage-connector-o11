@@ -81,6 +81,12 @@ public sealed class FakeFederationBackend : HttpMessageHandler
     public bool CorruptUploadInTransit;
     /// <summary>Objects stored by the fake upload endpoint, by "bucket/name".</summary>
     public readonly Dictionary<string, byte[]> StoredObjects = new Dictionary<string, byte[]>();
+    /// <summary>Generation the fake assigned to each stored object, by "bucket/name".</summary>
+    public readonly Dictionary<string, long> StoredGenerations = new Dictionary<string, long>();
+    /// <summary>Creation time the fake reports for each stored object, by "bucket/name" (RFC 3339).</summary>
+    public readonly Dictionary<string, string> StoredTimeCreated = new Dictionary<string, string>();
+    /// <summary>Generation the fake gives the next object it stores; each one is greater than the last.</summary>
+    public long NextGeneration = 5000;
     /// <summary>Generation the fake's object GET returns (what a caller reads).</summary>
     public long ObjectGeneration = 1001;
     /// <summary>Generation the stored object has now; set higher to simulate the content being replaced after the read.</summary>
@@ -94,6 +100,41 @@ public sealed class FakeFederationBackend : HttpMessageHandler
     /// response is returned as is, null falls through to the routes. May throw to simulate a transport failure.
     /// </summary>
     public Func<Recorded, HttpResponseMessage> Override;
+
+    /// <summary>
+    /// Stores an object as a completed upload would, with the fake's next generation and either the given
+    /// creation time or now, and returns the generation. A test calls it to set up "that object already
+    /// exists" without going through the upload endpoint.
+    /// </summary>
+    public long Store(string bucket, string name, byte[] content, string timeCreated)
+    {
+        string key = bucket + "/" + name;
+        lock (StoredObjects)
+        {
+            long generation = ++NextGeneration;
+            StoredObjects[key] = content;
+            StoredGenerations[key] = generation;
+            StoredTimeCreated[key] = string.IsNullOrEmpty(timeCreated) ? DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ") : timeCreated;
+            return generation;
+        }
+    }
+
+    /// <summary>The stored object's generation, or 0 when the fake has none for that name.</summary>
+    public long StoredGeneration(string bucket, string name)
+    {
+        lock (StoredObjects)
+        {
+            long generation;
+            return StoredGenerations.TryGetValue(bucket + "/" + name, out generation) ? generation : 0;
+        }
+    }
+
+    /// <summary>The Base64 MD5 of the bytes: the form Google (and this fake) reports in md5Hash.</summary>
+    public static string Md5Base64(byte[] content)
+    {
+        using (var md5 = System.Security.Cryptography.MD5.Create())
+            return Convert.ToBase64String(md5.ComputeHash(content));
+    }
 
     private readonly Dictionary<string, string[]> _uploadSessions = new Dictionary<string, string[]>();
 
@@ -194,6 +235,25 @@ public sealed class FakeFederationBackend : HttpMessageHandler
                 var name = Uri.UnescapeDataString(segments[5]);
                 if (request.Method == HttpMethod.Get)
                 {
+                    // A stored object is served as uploaded (size, hashes, generation, creation time), so a
+                    // test can check what this call stored; any other name keeps the fixed values the older
+                    // tests expect.
+                    string storedKey = bucket + "/" + name;
+                    byte[] storedContent;
+                    lock (StoredObjects)
+                    {
+                        if (StoredObjects.TryGetValue(storedKey, out storedContent))
+                        {
+                            return Json(HttpStatusCode.OK, new
+                            {
+                                kind = "storage#object", bucket = bucket, name = name,
+                                generation = StoredGenerations[storedKey].ToString(), metageneration = "1",
+                                contentType = "text/plain", size = storedContent.Length.ToString(),
+                                md5Hash = Md5Base64(storedContent), crc32c = Crc32c.Base64(storedContent),
+                                timeCreated = StoredTimeCreated[storedKey]
+                            });
+                        }
+                    }
                     return Json(HttpStatusCode.OK, new { kind = "storage#object", bucket = bucket, name = name, generation = ObjectGeneration.ToString(), metageneration = ObjectMetageneration.ToString(), contentType = "text/plain" });
                 }
                 if (request.Method == HttpMethod.Put || request.Method == Patch)
@@ -242,6 +302,27 @@ public sealed class FakeFederationBackend : HttpMessageHandler
         {
             var bucket = request.RequestUri.AbsolutePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)[4];
             var name = (string)Newtonsoft.Json.Linq.JObject.Parse(Encoding.UTF8.GetString(content))["name"];
+
+            // The session start carries the preconditions, as Google's resumable upload does. A 0 means
+            // "only if the object does not exist yet"; any other value must match the stored generation.
+            string precondition = QueryValue(request.RequestUri, "ifGenerationMatch");
+            if (precondition != null)
+            {
+                string objectKey = bucket + "/" + name;
+                bool exists;
+                long current = 0;
+                lock (StoredObjects)
+                {
+                    exists = StoredObjects.ContainsKey(objectKey);
+                    if (exists) current = StoredGenerations[objectKey];
+                }
+                long expected;
+                bool holds = long.TryParse(precondition, out expected)
+                    && (expected == 0 ? !exists : exists && current == expected);
+                if (!holds)
+                    return Json((HttpStatusCode)412, new { error = new { code = 412, message = "At least one of the pre-conditions you specified did not hold.", errors = new[] { new { reason = "conditionNotMet", message = "At least one of the pre-conditions you specified did not hold." } } } });
+            }
+
             var session = Guid.NewGuid().ToString("N");
             lock (_uploadSessions) _uploadSessions[session] = new[] { bucket, name };
             var started = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("") };
@@ -270,8 +351,20 @@ public sealed class FakeFederationBackend : HttpMessageHandler
             }
         }
 
-        lock (StoredObjects) StoredObjects[target[0] + "/" + target[1]] = received;
-        return Json(HttpStatusCode.OK, new { kind = "storage#object", bucket = target[0], name = target[1], size = received.Length.ToString(), crc32c = calculated });
+        long generation = Store(target[0], target[1], received, null);
+        return Json(HttpStatusCode.OK, new { kind = "storage#object", bucket = target[0], name = target[1], size = received.Length.ToString(), crc32c = calculated, md5Hash = Md5Base64(received), generation = generation.ToString() });
+    }
+
+    /// <summary>One query parameter's decoded value, or null when it is absent.</summary>
+    private static string QueryValue(Uri uri, string name)
+    {
+        if (string.IsNullOrEmpty(uri.Query)) return null;
+        foreach (string pair in uri.Query.TrimStart('?').Split(new[] { '&' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = pair.Split(new[] { '=' }, 2);
+            if (Uri.UnescapeDataString(parts[0]) == name) return parts.Length == 2 ? Uri.UnescapeDataString(parts[1]) : "";
+        }
+        return null;
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, object payload)
@@ -439,17 +532,19 @@ public static class FederationTests
         var ext = Fresh();
         bool exists;
 
+        // An empty AuthenticationMethod is no longer a shorthand for the key method: it is required.
         var none = Throws(() => ext.MssBucket_Exists(Empty(), "b", out exists));
-        TestLog.Check("An empty Authentication record names the missing key fields",
-            none is ArgumentException && Has(none.Message, "missing: ClientEmail, PrivateKey"), none == null ? "no exception" : none.Message);
+        TestLog.Check("An empty Authentication record is rejected because AuthenticationMethod is required",
+            none is ArgumentException && none.Message == "AuthenticationMethod is required. Set it to 'WorkloadIdentityFederation' or 'ServiceAccountKey'.",
+            none == null ? "no exception" : none.Message);
 
         string url;
-        ext.MssObject_GetSignedUrl(KeyRecord(email, pem, ""), "Download", "b", "o", 5, "", out url);
+        ext.MssObject_GetSignedUrl(KeyRecord(email, pem, "ServiceAccountKey"), "Download", "b", "o", 5, "", out url);
         TestLog.Check("A key in the record signs as that service account", CredentialParam(url) == email, url);
         TestLog.Check("Key-mode record signs locally (no network)", _backend.Requests.Count == 0, _backend.Requests.Count + " requests");
 
         RLGCS_BucketRecordList buckets;
-        var noPid = KeyRecord(email, pem, "");
+        var noPid = KeyRecord(email, pem, "ServiceAccountKey");
         noPid.ssSTGCS_Authentication.ssProjectId = "";
         var noProject = Throws(() => ext.MssBucket_List(noPid, out buckets));
         TestLog.Check("Bucket_List without ProjectId says ProjectId is required",
@@ -483,7 +578,7 @@ public static class FederationTests
         ext.MssObject_GetSignedUrl(KeyRecord(email, pem, "serviceaccountkey"), "Download", "b", "o", 5, "", out url);
         TestLog.Check("Explicit ServiceAccountKey (case-insensitive) behaves like the default", Has(url, "X-Goog-Signature") && _backend.Requests.Count == 0);
 
-        var noKey = KeyRecord(email, "", "");
+        var noKey = KeyRecord(email, "", "ServiceAccountKey");
         ex = Throws(() => ext.MssBucket_Exists(noKey, "b", out exists));
         TestLog.Check("ServiceAccountKey without key material names the missing field", ex is ArgumentException && Has(ex.Message, "missing: PrivateKey"), ex == null ? "no exception" : ex.Message);
 
@@ -541,7 +636,7 @@ public static class FederationTests
         TestLog.Check("TokenEndpoint with user info is rejected and the credentials are not echoed",
             ex is ArgumentException && !Has(ex == null ? "" : ex.Message, "pw"), ex == null ? "no exception" : ex.Message);
 
-        var key = StorageClientFor(KeyRecord(email, pem, ""));
+        var key = StorageClientFor(KeyRecord(email, pem, "ServiceAccountKey"));
         var sa = UniqueServiceAccount();
         var wif1 = StorageClientFor(ClientCredentials(sa));
         var wif2 = StorageClientFor(ClientCredentials(sa));
@@ -828,7 +923,8 @@ public static class UploadIntegrityTests
             SetFactory(new FakeHttpClientFactory(backend));
             var data = SampleBytes(300000);
             Exception ex = null;
-            try { new CssGoogleCloudStorage_ext().MssObject_Upload(Federated(), "my-bucket", "docs/report.bin", data, "application/octet-stream", new RLGCS_MetadataEntryRecordList()); }
+            long generation;
+            try { new CssGoogleCloudStorage_ext().MssObject_Upload(Federated(), "my-bucket", "docs/report.bin", data, "application/octet-stream", new RLGCS_MetadataEntryRecordList(), false, "", "", "", out generation); }
             catch (Exception e) { ex = e; }
             var puts = backend.To("/upload/storage/v1/b/my-bucket/o").Where(r => r.Method == HttpMethod.Put).ToList();
             string hash = null;
@@ -844,7 +940,7 @@ public static class UploadIntegrityTests
             backend.CorruptUploadInTransit = true;
             SetFactory(new FakeHttpClientFactory(backend));
             ex = null;
-            try { new CssGoogleCloudStorage_ext().MssObject_Upload(Federated(), "my-bucket", "docs/report.bin", SampleBytes(50000), "application/octet-stream", new RLGCS_MetadataEntryRecordList()); }
+            try { new CssGoogleCloudStorage_ext().MssObject_Upload(Federated(), "my-bucket", "docs/report.bin", SampleBytes(50000), "application/octet-stream", new RLGCS_MetadataEntryRecordList(), false, "", "", "", out generation); }
             catch (Exception e) { ex = e; }
             TestLog.Check("Data corrupted in transit is rejected with a 'nothing was stored, retry' error and nothing is stored",
                 ex != null && ex.Message.Contains("CRC32C") && ex.Message.Contains("nothing was stored") && ex.Message.Contains("retry") && backend.StoredObjects.Count == 0,

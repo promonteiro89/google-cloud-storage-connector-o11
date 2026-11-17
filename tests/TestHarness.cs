@@ -79,11 +79,12 @@ public static class EmulatorSeam
 
 public static class GcsExtensionTestSuite
 {
-    /// <summary>ServiceAccountKey credentials as the Authentication record (empty AuthenticationMethod = key).</summary>
+    /// <summary>ServiceAccountKey credentials as the Authentication record (AuthenticationMethod is required: it is never assumed).</summary>
     private static RCGCS_AuthenticationRecord Key(string proj, string email, string pem)
     {
         var r = new RCGCS_AuthenticationRecord(null);
         r.ssSTGCS_Authentication.ssProjectId = proj;
+        r.ssSTGCS_Authentication.ssAuthenticationMethod = "ServiceAccountKey";
         r.ssSTGCS_Authentication.ssClientEmail = email;
         r.ssSTGCS_Authentication.ssPrivateKey = pem;
         return r;
@@ -213,6 +214,9 @@ public static class GcsExtensionTestSuite
 
             TestLog.Section("1.7.5: repeats that may have been applied, name and header checks, HTTP factory, bucket repeats, download stall guard and size read, network retries (offline fakes)");
             HardeningTests.Run(email, pem);
+
+            TestLog.Section("2.0.0: secure bucket defaults, OnlyIfNotExists uploads, content headers, list fields, required AuthenticationMethod, signed-URL limit (offline fakes)");
+            Version2Tests.Run(email, pem);
 
             TestLog.Section("Signed-URL verifier used by the live job (offline proof)");
             LiveFederationTests.VerifierSelfTest(email, pem);
@@ -352,19 +356,20 @@ public static class GcsExtensionTestSuite
         string b1 = "test-bucket-alpha";
         string b2 = "test-bucket-beta";
         bool exists;
+        long generation = 0;
 
         // --- bucket lifecycle ---
         ext.MssBucket_Exists(Key(proj, email, pem), b1, out exists);
         OK("Bucket_Exists on missing bucket -> False", !exists);
 
-        ext.MssBucket_Create(Key(proj, email, pem), b1, "US");
+        ext.MssBucket_Create(Key(proj, email, pem), b1, "US", "", false, false);
         ext.MssBucket_Exists(Key(proj, email, pem), b1, out exists);
         OK("Bucket_Create + Bucket_Exists -> True", exists);
 
-        try { ext.MssBucket_Create(Key(proj, email, pem), b1, "US"); OK("Duplicate Bucket_Create raises 'Conflict: ... the name is already taken'", false, "no exception"); }
+        try { ext.MssBucket_Create(Key(proj, email, pem), b1, "US", "", false, false); OK("Duplicate Bucket_Create raises 'Conflict: ... the name is already taken'", false, "no exception"); }
         catch (Exception ex) { OK("Duplicate Bucket_Create raises 'Conflict: ... the name is already taken'", ex.Message.StartsWith("Conflict:", StringComparison.Ordinal) && ex.Message.Contains("name is already taken"), ex.Message); }
 
-        ext.MssBucket_Create(Key(proj, email, pem), b2, "EU");
+        ext.MssBucket_Create(Key(proj, email, pem), b2, "EU", "", false, false);
 
         RLGCS_BucketRecordList buckets;
         ext.MssBucket_List(Key(proj, email, pem), out buckets);
@@ -392,8 +397,9 @@ public static class GcsExtensionTestSuite
         files["img/photo.png"] = photo;
 
         foreach (var kv in files)
-            ext.MssObject_Upload(Key(proj, email, pem), b1, kv.Key, kv.Value, kv.Key.EndsWith(".txt") ? "text/plain" : "application/octet-stream", null);
+            ext.MssObject_Upload(Key(proj, email, pem), b1, kv.Key, kv.Value, kv.Key.EndsWith(".txt") ? "text/plain" : "application/octet-stream", null, false, "", "", "", out generation);
         OK("Object_Upload of " + files.Count + " objects (incl. empty, 5MB, unicode names)", true);
+        OK("Object_Upload returns a Generation greater than zero", generation > 0, generation.ToString());
 
         ext.MssObject_Exists(Key(proj, email, pem), b1, "root.txt", out exists);
         OK("Object_Exists -> True after upload", exists);
@@ -534,7 +540,7 @@ public static class GcsExtensionTestSuite
         try { byte[] c2; string ct2; ext.MssObject_Download(Key(proj, email, pem), b1, "does-not-exist.txt", out c2, out ct2); OK("Download of missing object raises \"Object 'does-not-exist.txt' was not found\"", false, "no exception"); }
         catch (Exception ex) { OK("Download of missing object raises \"Object 'does-not-exist.txt' was not found\"", ex.Message.StartsWith("Object 'does-not-exist.txt' was not found in bucket '" + b1 + "'", StringComparison.Ordinal), ex.Message); }
 
-        try { ext.MssObject_Upload(Key(proj, email, pem), "no-such-bucket-xyz", "f.txt", new byte[] { 1 }, "text/plain", null); OK("Upload to missing bucket raises \"Bucket 'no-such-bucket-xyz' does not exist\"", false, "no exception"); }
+        try { ext.MssObject_Upload(Key(proj, email, pem), "no-such-bucket-xyz", "f.txt", new byte[] { 1 }, "text/plain", null, false, "", "", "", out generation); OK("Upload to missing bucket raises \"Bucket 'no-such-bucket-xyz' does not exist\"", false, "no exception"); }
         catch (Exception ex) { OK("Upload to missing bucket raises \"Bucket 'no-such-bucket-xyz' does not exist\"", ex.Message.StartsWith("Bucket 'no-such-bucket-xyz' does not exist", StringComparison.Ordinal), ex.Message); }
 
         try { ext.MssBucket_Delete(Key(proj, email, pem), b1); OK("Bucket_Delete on non-empty bucket raises an error about the bucket not being empty", false, "no exception"); }
@@ -543,7 +549,7 @@ public static class GcsExtensionTestSuite
 
         // --- custom metadata (v1.5.0) ---
         ext.MssObject_Upload(Key(proj, email, pem), b1, "meta/tagged.txt", Encoding.UTF8.GetBytes("tagged"), "text/plain",
-            Meta("department", "finance", "owner", "ricardo"));
+            Meta("department", "finance", "owner", "ricardo"), false, "", "", "", out generation);
         ext.MssObject_GetMetadata(Key(proj, email, pem), b1, "meta/tagged.txt", out mdExists, out md, out custom);
         var tags = ToDict(custom);
         OK("Upload with custom metadata round-trips", mdExists && tags.Count == 2 && tags["department"] == "finance" && tags["owner"] == "ricardo",
@@ -581,7 +587,7 @@ public static class GcsExtensionTestSuite
                 zip.Write(original, 0, original.Length);
             gz = buffer.ToArray();
         }
-        ext.MssObject_Upload(Key(proj, email, pem), b1, "gz/rows.csv", gz, "text/csv", null);
+        ext.MssObject_Upload(Key(proj, email, pem), b1, "gz/rows.csv", gz, "text/csv", null, false, "", "", "", out generation);
         ext.MssObject_UpdateMetadata(Key(proj, email, pem), b1, "gz/rows.csv", "", "gzip", "", "", null);
         byte[] unzipped = null; string gzCt = null;
         Exception gzErr = null;
@@ -610,7 +616,7 @@ public static class GcsExtensionTestSuite
         // --- delete by prefix (v1.5.0) ---
         // A sibling folder sharing the stem ("uploads/2024/" vs "uploads/2025/") must survive.
         foreach (var n in new[] { "uploads/2025/a.txt", "uploads/2025/b.txt", "uploads/2025/sub/c.txt", "uploads/2024/keep.txt" })
-            ext.MssObject_Upload(Key(proj, email, pem), b1, n, Encoding.UTF8.GetBytes(n), "text/plain", null);
+            ext.MssObject_Upload(Key(proj, email, pem), b1, n, Encoding.UTF8.GetBytes(n), "text/plain", null, false, "", "", "", out generation);
 
         long deletedCount;
         ext.MssObject_DeleteByPrefix(Key(proj, email, pem), b1, "uploads/2025/", out deletedCount);

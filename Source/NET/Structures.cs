@@ -22,6 +22,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		internal static readonly GlobalObjectKey IdSize = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*IjNIykOia0iVfjLnvmQlmg");
 		internal static readonly GlobalObjectKey IdContentType = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*eEaCHYjEhEOj9TZrrVxTjQ");
 		internal static readonly GlobalObjectKey IdUpdated = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*Lxxe8RcVeUqwDhPrfEN7TA");
+		internal static readonly GlobalObjectKey IdGeneration = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*PG9ch_0OPk6niXyUiHFz0w");
+		internal static readonly GlobalObjectKey IdMD5Hash = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*Eii7gnK680KzYBsY2WOnMw");
+		internal static readonly GlobalObjectKey IdCrc32c = GlobalObjectKey.Parse("LSXUyDLU9EaMeZz89Pc82w*bYeVuRx_f0uh+XLFdsTTwA");
 
 		public static void EnsureInitialized() {}
 		[System.Xml.Serialization.XmlElement("Name")]
@@ -36,6 +39,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		[System.Xml.Serialization.XmlElement("Updated")]
 		public DateTime ssUpdated;
 
+		[System.Xml.Serialization.XmlElement("Generation")]
+		public long ssGeneration;
+
+		[System.Xml.Serialization.XmlElement("MD5Hash")]
+		public string ssMD5Hash;
+
+		[System.Xml.Serialization.XmlElement("Crc32c")]
+		public string ssCrc32c;
+
 
 		public BitArray OptimizedAttributes;
 
@@ -45,6 +57,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			ssSize = 0L;
 			ssContentType = "";
 			ssUpdated = new DateTime(1900, 1, 1, 0, 0, 0);
+			ssGeneration = 0L;
+			ssMD5Hash = "";
+			ssCrc32c = "";
 		}
 
 		public BitArray[] GetDefaultOptimizedValues() {
@@ -74,6 +89,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			ssSize = r.ReadLongInteger(index++, "GCS_Object.Size", 0L);
 			ssContentType = r.ReadText(index++, "GCS_Object.ContentType", "");
 			ssUpdated = r.ReadDateTime(index++, "GCS_Object.Updated", new DateTime(1900, 1, 1, 0, 0, 0));
+			ssGeneration = r.ReadLongInteger(index++, "GCS_Object.Generation", 0L);
+			ssMD5Hash = r.ReadText(index++, "GCS_Object.MD5Hash", "");
+			ssCrc32c = r.ReadText(index++, "GCS_Object.Crc32c", "");
 		}
 		/// <summary>
 		/// Read from database
@@ -98,6 +116,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			if (a.ssSize != b.ssSize) return false;
 			if (a.ssContentType != b.ssContentType) return false;
 			if (a.ssUpdated != b.ssUpdated) return false;
+			if (a.ssGeneration != b.ssGeneration) return false;
+			if (a.ssMD5Hash != b.ssMD5Hash) return false;
+			if (a.ssCrc32c != b.ssCrc32c) return false;
 			return true;
 		}
 
@@ -117,6 +138,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 				^ ssSize.GetHashCode()
 				^ ssContentType.GetHashCode()
 				^ ssUpdated.GetHashCode()
+				^ ssGeneration.GetHashCode()
+				^ ssMD5Hash.GetHashCode()
+				^ ssCrc32c.GetHashCode()
 				;
 			} catch {
 				return base.GetHashCode();
@@ -138,6 +162,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			ssSize = 0L;
 			ssContentType = "";
 			ssUpdated = new DateTime(1900, 1, 1, 0, 0, 0);
+			ssGeneration = 0L;
+			ssMD5Hash = "";
+			ssCrc32c = "";
 			Type objInfo = this.GetType();
 			FieldInfo fieldInfo = null;
 			fieldInfo = objInfo.GetField("ssName", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
@@ -168,6 +195,27 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			if (fieldInfo.FieldType.IsSerializable) {
 				ssUpdated = (DateTime) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
 			}
+			fieldInfo = objInfo.GetField("ssGeneration", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssGeneration' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssGeneration = (long) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssMD5Hash", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssMD5Hash' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssMD5Hash = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
+			fieldInfo = objInfo.GetField("ssCrc32c", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+			if (fieldInfo == null) {
+				throw new Exception("The field named 'ssCrc32c' was not found.");
+			}
+			if (fieldInfo.FieldType.IsSerializable) {
+				ssCrc32c = (string) info.GetValue(fieldInfo.Name, fieldInfo.FieldType);
+			}
 		}
 
 		public void RecursiveReset() {
@@ -183,6 +231,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			t.ssSize = this.ssSize;
 			t.ssContentType = this.ssContentType;
 			t.ssUpdated = this.ssUpdated;
+			t.ssGeneration = this.ssGeneration;
+			t.ssMD5Hash = this.ssMD5Hash;
+			t.ssCrc32c = this.ssCrc32c;
 			t.OptimizedAttributes = null;
 			return t;
 		}
@@ -202,6 +253,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 				if (!VarValue.FieldIsOptimized(parent, fieldName + ".Size")) VarValue.AppendAttribute(recordElem, "Size", ssSize, detailLevel, TypeKind.LongInteger); else VarValue.AppendOptimizedAttribute(recordElem, "Size");
 				if (!VarValue.FieldIsOptimized(parent, fieldName + ".ContentType")) VarValue.AppendAttribute(recordElem, "ContentType", ssContentType, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "ContentType");
 				if (!VarValue.FieldIsOptimized(parent, fieldName + ".Updated")) VarValue.AppendAttribute(recordElem, "Updated", ssUpdated, detailLevel, TypeKind.DateTime); else VarValue.AppendOptimizedAttribute(recordElem, "Updated");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".Generation")) VarValue.AppendAttribute(recordElem, "Generation", ssGeneration, detailLevel, TypeKind.LongInteger); else VarValue.AppendOptimizedAttribute(recordElem, "Generation");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".MD5Hash")) VarValue.AppendAttribute(recordElem, "MD5Hash", ssMD5Hash, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "MD5Hash");
+				if (!VarValue.FieldIsOptimized(parent, fieldName + ".Crc32c")) VarValue.AppendAttribute(recordElem, "Crc32c", ssCrc32c, detailLevel, TypeKind.Text); else VarValue.AppendOptimizedAttribute(recordElem, "Crc32c");
 			} else {
 				VarValue.AppendDeferredEvaluationElement(recordElem);
 			}
@@ -219,6 +273,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 				if (!VarValue.FieldIsOptimized(parent, baseName + ".ContentType")) variable.Value = ssContentType; else variable.Optimized = true;
 			} else if (head == "updated") {
 				if (!VarValue.FieldIsOptimized(parent, baseName + ".Updated")) variable.Value = ssUpdated; else variable.Optimized = true;
+			} else if (head == "generation") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".Generation")) variable.Value = ssGeneration; else variable.Optimized = true;
+			} else if (head == "md5hash") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".MD5Hash")) variable.Value = ssMD5Hash; else variable.Optimized = true;
+			} else if (head == "crc32c") {
+				if (!VarValue.FieldIsOptimized(parent, baseName + ".Crc32c")) variable.Value = ssCrc32c; else variable.Optimized = true;
 			}
 			if (variable.Found && tail != null) variable.EvaluateFields(this, head, tail);
 		}
@@ -240,6 +300,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 				return ssContentType;
 			} else if (key == IdUpdated) {
 				return ssUpdated;
+			} else if (key == IdGeneration) {
+				return ssGeneration;
+			} else if (key == IdMD5Hash) {
+				return ssMD5Hash;
+			} else if (key == IdCrc32c) {
+				return ssCrc32c;
 			} else {
 				throw new Exception("Invalid key");
 			}
@@ -250,6 +316,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			ssSize = (long) other.AttributeGet(IdSize);
 			ssContentType = (string) other.AttributeGet(IdContentType);
 			ssUpdated = (DateTime) other.AttributeGet(IdUpdated);
+			ssGeneration = (long) other.AttributeGet(IdGeneration);
+			ssMD5Hash = (string) other.AttributeGet(IdMD5Hash);
+			ssCrc32c = (string) other.AttributeGet(IdCrc32c);
 		}
 		public bool IsDefault() {
 			STGCS_ObjectStructure defaultStruct = new STGCS_ObjectStructure(null);
@@ -257,6 +326,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 			if (this.ssSize != defaultStruct.ssSize) return false;
 			if (this.ssContentType != defaultStruct.ssContentType) return false;
 			if (this.ssUpdated != defaultStruct.ssUpdated) return false;
+			if (this.ssGeneration != defaultStruct.ssGeneration) return false;
+			if (this.ssMD5Hash != defaultStruct.ssMD5Hash) return false;
+			if (this.ssCrc32c != defaultStruct.ssCrc32c) return false;
 			return true;
 		}
 	} // STGCS_ObjectStructure
@@ -1434,9 +1506,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 
 	/// <summary>
 	/// Structure <code>STGCS_AuthenticationStructure</code> that represents the Service Studio structure
-	///  <code>GCS_Authentication</code> <p> Description: Google Cloud credentials. Two methods ar
-	/// e supported: 'WorkloadIdentityFederation' (recommended, keyless) and 'ServiceAccountKey' (legacy:
-	///  ClientEmail + PrivateKey). Leave AuthenticationMethod empty to use ServiceAccountKey.</p>
+	///  <code>GCS_Authentication</code> <p> Description: Google Cloud credentials. AuthenticationMethod i
+	/// s required: 'WorkloadIdentityFederation' (recommended, keyless) or 'ServiceAccountKey' (ClientEmail
+	///  + PrivateKey).</p>
 	/// </summary>
 	[Serializable()]
 	public partial struct STGCS_AuthenticationStructure: ISerializable, ITypedRecord<STGCS_AuthenticationStructure>, ISimpleRecord {
@@ -1496,7 +1568,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		public STGCS_AuthenticationStructure(params string[] dummy) {
 			OptimizedAttributes = null;
 			ssProjectId = "";
-			ssAuthenticationMethod = "ServiceAccountKey";
+			ssAuthenticationMethod = "";
 			ssClientEmail = "";
 			ssPrivateKey = "";
 			ssWorkloadIdentityProvider = "";
@@ -1621,7 +1693,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext {
 		public STGCS_AuthenticationStructure(SerializationInfo info, StreamingContext context) {
 			OptimizedAttributes = null;
 			ssProjectId = "";
-			ssAuthenticationMethod = "ServiceAccountKey";
+			ssAuthenticationMethod = "";
 			ssClientEmail = "";
 			ssPrivateKey = "";
 			ssWorkloadIdentityProvider = "";

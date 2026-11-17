@@ -342,10 +342,11 @@ public static class RetryTests
     {
         var data = Encoding.UTF8.GetBytes("upload me");
         var noMeta = new RLGCS_MetadataEntryRecordList();
+        long generation;
 
         int posts = 0;
         var backend = NewBackend(r => { if (IsSessionStart(r) && ++posts == 1) return GoogleError(503, "Service Unavailable"); return null; });
-        var ex = FederationTests.Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "up/a.txt", data, "text/plain", noMeta));
+        var ex = FederationTests.Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "up/a.txt", data, "text/plain", noMeta, false, "", "", "", out generation));
         byte[] stored;
         bool found;
         lock (backend.StoredObjects) found = backend.StoredObjects.TryGetValue("my-bucket/up/a.txt", out stored);
@@ -353,12 +354,12 @@ public static class RetryTests
             ex == null && found && stored.SequenceEqual(data) && Count(backend, IsSessionStart) == 2, Detail(ex, backend));
 
         backend = NewBackend(r => { if (IsSessionStart(r)) return GoogleError(403, "Permission denied"); return null; });
-        ex = FederationTests.Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "up/a.txt", data, "text/plain", noMeta));
+        ex = FederationTests.Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "up/a.txt", data, "text/plain", noMeta, false, "", "", "", out generation));
         TestLog.Check("Upload (b): a 403 is not retried (1 session POST)",
             ex != null && Has(ex.Message, "Access denied") && Count(backend, IsSessionStart) == 1, Detail(ex, backend));
 
         backend = NewBackend(null);
-        ex = FederationTests.Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "up/a.txt", data, "text/plain\r\nX-Injected: 1", noMeta));
+        ex = FederationTests.Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "up/a.txt", data, "text/plain\r\nX-Injected: 1", noMeta, false, "", "", "", out generation));
         int requests;
         lock (backend.Requests) requests = backend.Requests.Count;
         TestLog.Check("Upload (c): a ContentType with a line break is rejected with 'ContentType must not contain line breaks.' before any request",

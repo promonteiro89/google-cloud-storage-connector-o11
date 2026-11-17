@@ -75,9 +75,10 @@ public static class RegressionTests
 
     public static void RunEmulator(CssGoogleCloudStorage_ext ext, RCGCS_AuthenticationRecord auth, string bucket)
     {
+        long generation;
 
         // C. Upload with null content
-        ext.MssObject_Upload(auth, bucket, "regr/null-content.bin", null, "application/octet-stream", null);
+        ext.MssObject_Upload(auth, bucket, "regr/null-content.bin", null, "application/octet-stream", null, false, "", "", "", out generation);
         byte[] content;
         string contentType;
         ext.MssObject_Download(auth, bucket, "regr/null-content.bin", out content, out contentType);
@@ -86,7 +87,7 @@ public static class RegressionTests
             "content length=" + (content == null ? "null" : content.Length.ToString()));
 
         // D. Upload with empty ContentType
-        ext.MssObject_Upload(auth, bucket, "regr/no-type.txt", Encoding.UTF8.GetBytes("x"), "", null);
+        ext.MssObject_Upload(auth, bucket, "regr/no-type.txt", Encoding.UTF8.GetBytes("x"), "", null, false, "", "", "", out generation);
         byte[] content2;
         string contentType2;
         ext.MssObject_Download(auth, bucket, "regr/no-type.txt", out content2, out contentType2);
@@ -129,7 +130,7 @@ public static class RegressionTests
             "count=" + records.Length);
 
         // H. Object_Copy 404s name the missing side (v1.7.1)
-        ext.MssObject_Upload(auth, bucket, "regr/copy-src.txt", Encoding.UTF8.GetBytes("copy me"), "text/plain", null);
+        ext.MssObject_Upload(auth, bucket, "regr/copy-src.txt", Encoding.UTF8.GetBytes("copy me"), "text/plain", null, false, "", "", "", out generation);
 
         Exception copyMissingBucketEx = null;
         try

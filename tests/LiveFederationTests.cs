@@ -176,6 +176,7 @@ public static class LiveFederationTests
         string url;
         var keyAuth = new RCGCS_AuthenticationRecord(null);
         keyAuth.ssSTGCS_Authentication.ssProjectId = "proj";
+        keyAuth.ssSTGCS_Authentication.ssAuthenticationMethod = "ServiceAccountKey";
         keyAuth.ssSTGCS_Authentication.ssClientEmail = email;
         keyAuth.ssSTGCS_Authentication.ssPrivateKey = pem;
         new CssGoogleCloudStorage_ext().MssObject_GetSignedUrl(keyAuth, "Download", "my-bucket", "folder/report 2025.pdf", 15, "", out url);

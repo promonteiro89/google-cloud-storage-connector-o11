@@ -69,11 +69,11 @@ Two methods, selected with `AuthenticationMethod`:
 | Method | Google's guidance | Google credential stored | Signed URLs |
 |---|---|---|---|
 | `WorkloadIdentityFederation` | Recommended for workloads outside Google Cloud | None, only short-lived tokens | Signed by the service account through the IAM `signBlob` API |
-| `ServiceAccountKey` (default when empty) | Last resort | A long-lived private key | Signed locally with the key |
+| `ServiceAccountKey` | Last resort | A long-lived private key | Signed locally with the key |
 
 ### Passing credentials to an action
 
-Every action takes one mandatory `Authentication` input, a `GCS_Authentication` record. Leave `AuthenticationMethod` empty to use a service account key, or set it to `WorkloadIdentityFederation`. The method is a plain value, so you can read it from a Site Property and switch one environment at a time. A small server action of your own that builds the record from your Site Properties saves repeating it on every call.
+Every action takes one mandatory `Authentication` input, a `GCS_Authentication` record. `AuthenticationMethod` is required: set it to `WorkloadIdentityFederation` or `ServiceAccountKey`. An empty value is rejected before anything is sent (1.x treated it as `ServiceAccountKey`). The method is a plain value, so you can read it from a Site Property and switch one environment at a time. A small server action of your own that builds the record from your Site Properties saves repeating it on every call.
 
 `ProjectId` is required by `Bucket_List` and `Bucket_Create`; the other actions don't use it.
 
@@ -144,7 +144,7 @@ Then set `WorkloadIdentityProvider` to `//iam.googleapis.com/projects/$PROJECT_N
 
 ### Service account key
 
-Set these in the `GCS_Authentication` record, with `AuthenticationMethod` empty or `ServiceAccountKey`:
+Set these in the `GCS_Authentication` record, with `AuthenticationMethod` set to `ServiceAccountKey`:
 
 | Field | Source in the service account JSON key | Description |
 |---|---|---|
@@ -169,7 +169,7 @@ An empty bucket or object name is rejected with an "is required" error before an
 ### Object Operations
 
 #### `Object_Upload`
-Uploads binary content to a bucket. Overwrites the object if it already exists.
+Uploads binary content to a bucket. Overwrites an existing object with that name, unless `OnlyIfNotExists` is True.
 
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
@@ -178,8 +178,15 @@ Uploads binary content to a bucket. Overwrites the object if it already exists.
 | `Content` | In | Binary Data | File content |
 | `ContentType` | In | Text | MIME type, e.g. `application/pdf`. Printable ASCII only: no line breaks, control characters or accented letters |
 | `Metadata` | In | List of `GCS_MetadataEntry` | Optional custom key-value metadata to store with the object |
+| `OnlyIfNotExists` | In | Boolean | Optional, default False. True stores the object only if no object with that name exists; otherwise the action fails with "Object '...' already exists in bucket '...'" and the existing object is left unchanged |
+| `ContentDisposition` | In | Text | Optional, e.g. `attachment; filename="report.pdf"`. Printable ASCII only. Empty sets none |
+| `CacheControl` | In | Text | Optional, e.g. `private, max-age=0`. Printable ASCII only. Empty uses Google's default |
+| `ContentEncoding` | In | Text | Optional, e.g. `gzip` when `Content` is already gzip-compressed. Printable ASCII only. Empty sets none |
+| `Generation` | Out | Long Integer | The generation (version number) Google gave the stored object |
 
 A transient Google error (408, 429, 500, 502, 503, 504, or a dropped connection) repeats the whole upload, up to 3 attempts, about 1 and then 2 seconds apart. Repeating is safe because the same bytes are written again. Timeouts are not repeated.
+
+With `OnlyIfNotExists`, a repeat can find the name taken by its own earlier attempt, whose answer was lost. The action then reads the object, and if it has the same size and MD5 as `Content` and was created during this call (allowing one minute for clock difference), it succeeds with that object's `Generation` instead of reporting it as existing.
 
 The upload carries a CRC32C checksum of `Content`. If the data Google receives doesn't match, the action fails with an "Upload rejected by Google Cloud Storage ... retry the upload" error, nothing is stored, and any existing object with that name is left unchanged.
 
@@ -302,13 +309,13 @@ Creates a time-limited V4 signed URL that lets a browser or other client read, w
 | `Operation` | In | Text | `Download` (GET), `Upload` (PUT) or `Delete` (DELETE), case-insensitive. Optional in Service Studio, where it defaults to `Download`; an empty text is rejected |
 | `BucketName` | In | Text | Bucket |
 | `ObjectName` | In | Text | Required: full path and name (an empty name would sign a URL for the whole bucket) |
-| `ExpirationMinutes` | In | Integer | How long the URL is valid: 1 to 10080 minutes (7 days, the V4 maximum). With Workload Identity Federation, use 720 (12 hours) or less; see below |
+| `ExpirationMinutes` | In | Integer | How long the URL is valid: 1 to 10080 minutes (7 days, the V4 maximum) with a service account key; 1 to 720 minutes (12 hours) with Workload Identity Federation, see below |
 | `ContentType` | In | Text | Optional, `Upload` only: the exact `Content-Type` the client will send. It becomes part of the signature, so an upload with a different type is rejected. Empty allows any. Printable ASCII only. Ignored for `Download` and `Delete` |
 | `URL` | Out | Text | The signed URL. For `Upload`, the client sends an HTTP PUT with the file as the body |
 
 A signed URL covers one object path, so request one `Upload` URL per file. An `Upload` URL doesn't limit the size of what is uploaded, and it overwrites an existing object with that name.
 
-With Workload Identity Federation the URL is signed with a key that Google manages for the service account and rotates. Google's documentation says such a key "may not remain valid after 12 hours", so a URL with a longer `ExpirationMinutes` can stop working before it expires. The action accepts up to 7 days with both methods; with federation, keep it at 720 minutes or less. With a service account key the full 7 days apply.
+With Workload Identity Federation the URL is signed with a key that Google manages for the service account and rotates. Google's documentation says such a key "may not remain valid after 12 hours", so a URL with a longer `ExpirationMinutes` can stop working before it expires. Since 2.0.0 the action therefore rejects more than 720 minutes with federation, before anything is sent. With a service account key the full 7 days apply.
 
 A browser on another origin (your app's domain) can only use the URL if the bucket's CORS configuration allows that origin and method. The extension doesn't manage CORS; set it once on the bucket, for example with `gcloud storage buckets update gs://MY_BUCKET --cors-file=cors.json`.
 
@@ -331,9 +338,12 @@ Creates a bucket in the project given by `Authentication.ProjectId`.
 | Parameter | Direction | Type | Description |
 |---|---|---|---|
 | `BucketName` | In | Text | Name; must be unique across all of Google Cloud Storage |
-| `Location` | In | Text | Region or multi-region, e.g. `US`, `EU`, `asia-east1` |
+| `Location` | In | Text | Region or multi-region, e.g. `US`, `EU`, `asia-east1`. Empty uses Google's default |
+| `StorageClass` | In | Text | Optional default storage class for new objects: `STANDARD`, `NEARLINE`, `COLDLINE` or `ARCHIVE`, case-insensitive. Empty uses `STANDARD`. Other values are rejected before the request |
+| `AllowFineGrainedAcl` | In | Boolean | Optional, default False: uniform bucket-level access is on, so access is managed only with IAM. True leaves it off, so per-object ACLs can be used |
+| `AllowPublicAccess` | In | Boolean | Optional, default False: public access prevention is enforced, so nothing in the bucket can be made public. True leaves it to your organization's policy (`inherited`) |
 
-The bucket gets Google's default settings for the project. The action doesn't turn on uniform bucket-level access or public access prevention; set those on the bucket, or enforce them with an organization policy.
+Since 2.0.0 new buckets are private and IAM-only by default. Before, the action sent only the name and location, so Google's older defaults applied. Buckets that already exist are not changed.
 
 If the create request is repeated after a lost answer or a 5xx and Google then reports the name as taken, the action checks whether the bucket was created by the first request (it is readable and was created after the call started, allowing one minute for clock difference) and succeeds if so.
 
@@ -363,7 +373,7 @@ If the delete request is repeated after a lost answer or a 5xx and the bucket is
 ### `GCS_Authentication`
 The credentials passed in every action's `Authentication` input. See [Authentication](#authentication).
 - `ProjectId`: Text (mandatory in the record; used by `Bucket_List` / `Bucket_Create`)
-- `AuthenticationMethod`: Text: `WorkloadIdentityFederation` or `ServiceAccountKey` (empty = `ServiceAccountKey`)
+- `AuthenticationMethod`: Text, required: `WorkloadIdentityFederation` or `ServiceAccountKey`. No default; an empty value is rejected
 - `ClientEmail`, `PrivateKey`: Text (ServiceAccountKey only)
 - `WorkloadIdentityProvider`, `ServiceAccountEmail`, `TokenEndpoint`, `ClientId`, `ClientSecret`, `Scope`, `Audience`, `SubjectToken`: Text (WorkloadIdentityFederation only)
 
@@ -373,6 +383,9 @@ An object in an `Object_List` result.
 - `Size`: Long Integer
 - `ContentType`: Text
 - `Updated`: Date Time (UTC)
+- `Generation`: Long Integer (the object's version number; changes on every overwrite)
+- `MD5Hash`: Text (Base64; empty for composite objects)
+- `Crc32c`: Text (Base64)
 
 ### `GCS_MetadataEntry`
 One custom metadata key-value pair of an object.

@@ -69,6 +69,7 @@ public static class CacheIsolationTests
     {
         var r = new RCGCS_AuthenticationRecord(null);
         r.ssSTGCS_Authentication.ssProjectId = "proj";
+        r.ssSTGCS_Authentication.ssAuthenticationMethod = "ServiceAccountKey";
         r.ssSTGCS_Authentication.ssClientEmail = email;
         r.ssSTGCS_Authentication.ssPrivateKey = pem;
         return r;

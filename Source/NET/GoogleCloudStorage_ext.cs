@@ -26,7 +26,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Updates an object&apos;s metadata without re-uploading its content. Only the provided fields are changed: empty text inputs leave the corresponding field untouched, and an empty Metadata list leaves custom metadata untouched. Within Metadata, an entry with an empty Value removes that key.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssObjectName">The full path/name of the object to update.</param>
 		/// <param name="ssContentType">New MIME type. Empty = unchanged.</param>
@@ -89,7 +89,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Deletes all objects whose names start with the given prefix (a &apos;folder&apos; and everything under it). The Prefix is mandatory and cannot be empty, as a safety measure against accidentally wiping an entire bucket. Returns the number of objects deleted.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssPrefix">All objects whose names start with this prefix are deleted (e.g. &apos;uploads/2025/&apos;). Cannot be empty.</param>
 		/// <param name="ssDeletedCount">Number of objects that were deleted.</param>
@@ -159,7 +159,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Checks whether a bucket exists, without listing its contents. Returns False only when Google reports that the bucket does not exist; a bucket that exists but that the service account cannot access raises an error.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssExists">True if the bucket exists. False if Google reports that it does not exist.</param>
 		public void MssBucket_Exists(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, out bool ssExists) {
@@ -182,7 +182,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Copies an object to another location, within the same bucket or across buckets, without downloading its content. If the destination object exists, it will be overwritten.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssSourceBucketName">The bucket that currently contains the object.</param>
 		/// <param name="ssSourceObjectName">The full path/name of the source object (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssDestinationBucketName">The bucket to copy the object into (can be the same as the source).</param>
@@ -211,7 +211,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Moves an object to another location (copy + delete of the source), within the same bucket or across buckets. Use the same source and destination bucket with a different destination name to rename an object. Source and destination must be different objects. If the destination exists, it will be overwritten. A move is not atomic (copy, then delete), so a failed delete leaves both objects in place; it is guarded against concurrent changes of the source, so a source that is replaced during the move is not deleted.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssSourceBucketName">The bucket that currently contains the object.</param>
 		/// <param name="ssSourceObjectName">The full path/name of the source object (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssDestinationBucketName">The bucket to move the object into (can be the same as the source).</param>
@@ -734,7 +734,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Retrieves the metadata of a specific object (size, content type, hashes, generation, timestamps, storage class) without downloading its content. Returns Exists = False if the object does not exist.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssObjectName">The full path/name of the file (e.g., &apos;images/profile.jpg&apos;).</param>
 		/// <param name="ssExists">Returns True if the object was found in the bucket, and False if it does not exist. When False, the Metadata record is returned empty.</param>
@@ -797,8 +797,8 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		// ---- Authentication --------------------------------------------------------------
 		// WorkloadIdentityFederation: IdP JWT (client credentials or SubjectToken) -> Google STS ->
 		// service account impersonation; URLs signed through IAM signBlob.
-		// ServiceAccountKey (default when AuthenticationMethod is empty): ClientEmail + PrivateKey;
-		// URLs signed locally.
+		// ServiceAccountKey: ClientEmail + PrivateKey; URLs signed locally.
+		// AuthenticationMethod is required: neither method is assumed when it is empty.
 
 		internal const string MethodServiceAccountKey = "ServiceAccountKey";
 		internal const string MethodWorkloadIdentityFederation = "WorkloadIdentityFederation";
@@ -1024,16 +1024,25 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 
 		// ---- Method resolution and validation ----------------------------------------------
 
+		/// <summary>
+		/// Resolves and validates AuthenticationMethod. It is required: an empty value is rejected rather
+		/// than assumed to mean ServiceAccountKey, because a record copied from an older version would
+		/// otherwise silently sign in with whichever key material it happens to carry. The value is not
+		/// echoed when it is empty.
+		/// </summary>
 		private static AuthMethod ResolveAuthMethod(AuthConfig a)
 		{
 			string method = (a.AuthenticationMethod ?? string.Empty).Trim();
+			if (method.Length == 0)
+				throw new ArgumentException("AuthenticationMethod is required. Set it to '" + MethodWorkloadIdentityFederation + "' or '" + MethodServiceAccountKey + "'.");
+
 			AuthMethod resolved;
-			if (method.Length == 0 || method.Equals(MethodServiceAccountKey, StringComparison.OrdinalIgnoreCase))
+			if (method.Equals(MethodServiceAccountKey, StringComparison.OrdinalIgnoreCase))
 				resolved = AuthMethod.ServiceAccountKey;
 			else if (method.Equals(MethodWorkloadIdentityFederation, StringComparison.OrdinalIgnoreCase))
 				resolved = AuthMethod.WorkloadIdentityFederation;
 			else
-				throw new ArgumentException("Invalid AuthenticationMethod '" + SafeName(a.AuthenticationMethod) + "'. Use '" + MethodWorkloadIdentityFederation + "' or '" + MethodServiceAccountKey + "' (or leave it empty for " + MethodServiceAccountKey + ").");
+				throw new ArgumentException("Invalid AuthenticationMethod '" + SafeName(a.AuthenticationMethod) + "'. Use '" + MethodWorkloadIdentityFederation + "' or '" + MethodServiceAccountKey + "'.");
 
 			var missing = new List<string>();
 			if (resolved == AuthMethod.ServiceAccountKey)
@@ -1071,6 +1080,12 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			return ResolveAuthMethodSafe(a) == AuthMethod.WorkloadIdentityFederation ? a.ServiceAccountEmail : a.ClientEmail;
 		}
 
+		/// <summary>
+		/// Which method the record names, without validating anything: for building error messages only.
+		/// Every action validates the method through ResolveAuthMethod (which requires it) before any
+		/// request, so an empty or invalid value never reaches a message; the key case is only the
+		/// fallback for a record that was never validated.
+		/// </summary>
 		private static AuthMethod ResolveAuthMethodSafe(AuthConfig a)
 		{
 			return (a.AuthenticationMethod ?? string.Empty).Trim().Equals(MethodWorkloadIdentityFederation, StringComparison.OrdinalIgnoreCase)
@@ -2042,7 +2057,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Lists all buckets in the specified project.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketList"></param>
 		public void MssBucket_List(RCGCS_AuthenticationRecord ssAuthentication, out RLGCS_BucketRecordList ssBucketList)
 		{
@@ -2075,14 +2090,20 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		} // MssBucket_List
 
 		/// <summary>
-		/// Creates a new bucket in the specified project.
+		/// Creates a new bucket in the specified project. By default uniform bucket-level access is on and
+		/// public access prevention is enforced, so per-object ACLs cannot be used and nothing can be made
+		/// public; AllowFineGrainedAcl and AllowPublicAccess turn those off.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssLocation"></param>
-		public void MssBucket_Create(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssLocation)
+		/// <param name="ssStorageClass">Default storage class for new objects: STANDARD, NEARLINE, COLDLINE or ARCHIVE (case-insensitive). Empty uses Google&apos;s default (STANDARD).</param>
+		/// <param name="ssAllowFineGrainedAcl">False (default) turns on uniform bucket-level access, so access is managed only with IAM. True leaves it off, so per-object ACLs can be used.</param>
+		/// <param name="ssAllowPublicAccess">False (default) enforces public access prevention, so nothing in the bucket can be made public. True leaves it to the organization&apos;s policy (&apos;inherited&apos;).</param>
+		public void MssBucket_Create(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssLocation, string ssStorageClass, bool ssAllowFineGrainedAcl, bool ssAllowPublicAccess)
 		{
 			RequireBucketName(ssBucketName, "BucketName");
+			string storageClass = ToStorageClass(ssStorageClass);
 			var auth = FromRecord(ssAuthentication);
 			RequireProjectId(auth, "Bucket_Create");
 			var storageClient = GetStorageClient(auth);
@@ -2098,7 +2119,15 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 					new Bucket
 					{
 						Name = ssBucketName,
-						Location = string.IsNullOrWhiteSpace(ssLocation) ? null : ssLocation.Trim()
+						Location = string.IsNullOrWhiteSpace(ssLocation) ? null : ssLocation.Trim(),
+						StorageClass = storageClass,
+						// Secure by default: uniform access (no per-object ACLs) and public access
+						// prevention enforced. Both can be turned off by the caller.
+						IamConfiguration = new Bucket.IamConfigurationData
+						{
+							UniformBucketLevelAccess = new Bucket.IamConfigurationData.UniformBucketLevelAccessData { Enabled = !ssAllowFineGrainedAcl },
+							PublicAccessPrevention = ssAllowPublicAccess ? "inherited" : "enforced"
+						}
 					},
 					new CreateBucketOptions { RetryOptions = RetryOptions.Never }
 				), resent);
@@ -2109,6 +2138,22 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, null); }
 		} // MssBucket_Create
+
+		/// <summary>
+		/// Validates and normalizes StorageClass before any request: Google answers an unknown class with a
+		/// late 400 that echoes it back, after the name has been checked and possibly taken. Empty means
+		/// "not sent", so the bucket gets Google's default (STANDARD); otherwise the value is upper-cased
+		/// so 'nearline' works like 'NEARLINE'.
+		/// </summary>
+		private static string ToStorageClass(string value)
+		{
+			string trimmed = (value ?? string.Empty).Trim();
+			if (trimmed.Length == 0) return null;
+
+			string upper = trimmed.ToUpperInvariant();
+			if (upper == "STANDARD" || upper == "NEARLINE" || upper == "COLDLINE" || upper == "ARCHIVE") return upper;
+			throw new ArgumentException("Invalid StorageClass '" + SafeName(value) + "'. Use STANDARD, NEARLINE, COLDLINE or ARCHIVE, or leave it empty for STANDARD.");
+		}
 
 		/// <summary>
 		/// After a repeated Bucket_Create is answered 'name already taken': true when the bucket is readable
@@ -2130,7 +2175,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Deletes a bucket. The bucket must be empty.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName"></param>
 		public void MssBucket_Delete(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName)
 		{
@@ -2154,7 +2199,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Deletes an object from a bucket.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssObjectName"></param>
 		public void MssObject_Delete(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName)
@@ -2222,7 +2267,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Checks whether an object exists in a bucket.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssObjectName"></param>
 		/// <param name="ssExists"></param>
@@ -2254,11 +2299,11 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// <summary>
 		/// Generates a time-limited V4 signed URL that lets a browser or other client download, upload or delete one object directly from Google, without credentials.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssOperation">&apos;Download&apos;, &apos;Upload&apos; or &apos;Delete&apos; (case-insensitive). Defaults to &apos;Download&apos; when the input is not set; an empty text is rejected.</param>
 		/// <param name="ssBucketName">The globally unique name of the storage bucket.</param>
 		/// <param name="ssObjectName">The full path/name of the object the URL grants access to. Required: a URL without an object name would grant access to the bucket itself.</param>
-		/// <param name="ssExpirationMinutes">How long the URL stays valid: 1 to 10080 minutes (7 days, the maximum for a V4 signed URL). With Workload Identity Federation use 720 (12 hours) or less: Google signs the URL with a key it rotates, so a longer-lived URL can stop working early.</param>
+		/// <param name="ssExpirationMinutes">How long the URL stays valid: 1 to 10080 minutes (7 days, the maximum for a V4 signed URL) with a service account key, and 1 to 720 minutes (12 hours) with Workload Identity Federation, because Google signs those URLs with a key it rotates.</param>
 		/// <param name="ssContentType">Upload only: the exact Content-Type the client must send, which becomes part of the signature. Ignored for Download and Delete. Printable ASCII only.</param>
 		/// <param name="ssURL">The V4 signed URL.</param>
 		public void MssObject_GetSignedUrl(RCGCS_AuthenticationRecord ssAuthentication, string ssOperation, string ssBucketName, string ssObjectName, int ssExpirationMinutes, string ssContentType, out string ssURL)
@@ -2294,6 +2339,14 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 			}
 
 			var auth = FromRecord(ssAuthentication);
+
+			// With Workload Identity Federation the URL is signed by IAM signBlob with a key Google
+			// rotates, so a URL outliving the rotation window can stop working before it expires. Refused
+			// here, before GetUrlSigner, so a token exchange or signBlob request is never sent. Service
+			// account keys sign locally and keep the V4 limit (10080 minutes).
+			if (ResolveAuthMethodSafe(auth) == AuthMethod.WorkloadIdentityFederation && ssExpirationMinutes > 720)
+				throw new ArgumentException("ExpirationMinutes cannot exceed 720 minutes (12 hours) with Workload Identity Federation: Google signs these URLs with a key it rotates, so a longer-lived URL could stop working before it expires (received " + ssExpirationMinutes + ").");
+
 			var urlSigner = GetUrlSigner(auth);
 
 			var template = UrlSigner.RequestTemplate
@@ -2328,51 +2381,115 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		} // MssObject_GetSignedUrl
 
 		/// <summary>
-		/// Uploads an object to a bucket.
+		/// Uploads an object to a bucket and returns its Generation. Overwrites an existing object unless
+		/// OnlyIfNotExists is True, in which case an existing object is left unchanged and an error is raised.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssObjectName"></param>
 		/// <param name="ssContent"></param>
 		/// <param name="ssContentType"></param>
 		/// <param name="ssMetadata">Optional custom key-value metadata to store with the object. Retrievable via Object_GetMetadata.</param>
-		public void MssObject_Upload(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, byte[] ssContent, string ssContentType, RLGCS_MetadataEntryRecordList ssMetadata)
+		/// <param name="ssOnlyIfNotExists">True stores the object only if no object with this name exists yet; otherwise the action fails with an &apos;already exists&apos; error and the existing object is left unchanged. False (default) overwrites.</param>
+		/// <param name="ssContentDisposition">Optional Content-Disposition header, e.g. &apos;attachment; filename=&quot;report.pdf&quot;&apos;. Empty sets none.</param>
+		/// <param name="ssCacheControl">Optional Cache-Control header, e.g. &apos;private, max-age=0&apos;. Empty uses Google&apos;s default.</param>
+		/// <param name="ssContentEncoding">Optional Content-Encoding header, e.g. &apos;gzip&apos; when Content is already gzip-compressed. Empty sets none.</param>
+		/// <param name="ssGeneration">The generation (version number) Google assigned to the stored object.</param>
+		public void MssObject_Upload(RCGCS_AuthenticationRecord ssAuthentication, string ssBucketName, string ssObjectName, byte[] ssContent, string ssContentType, RLGCS_MetadataEntryRecordList ssMetadata, bool ssOnlyIfNotExists, string ssContentDisposition, string ssCacheControl, string ssContentEncoding, out long ssGeneration)
 		{
+			// Assign it first so every path has a value, including an exception path.
+			ssGeneration = 0;
 			RequireBucketName(ssBucketName, "BucketName");
 			RequireObjectName(ssObjectName, "ObjectName");
-			// ContentType becomes an HTTP header; a line break or a non-ASCII character would fail deep in .NET.
+			// These become HTTP headers; a line break or a non-ASCII character would fail deep in .NET.
 			RequireHeaderValue(ssContentType, "ContentType");
+			RequireHeaderValue(ssContentDisposition, "ContentDisposition");
+			RequireHeaderValue(ssCacheControl, "CacheControl");
+			RequireHeaderValue(ssContentEncoding, "ContentEncoding");
 			var auth = FromRecord(ssAuthentication);
 			var storageClient = GetStorageClient(auth);
 			var metadata = ToMetadataDictionary(ssMetadata);
 			var content = ssContent ?? new byte[0];
 
+			// Only a 0-generation precondition ("store only if it does not exist") is needed; with
+			// OnlyIfNotExists False the options stay null, so the upload overwrites as before.
+			var uploadOptions = ssOnlyIfNotExists ? new UploadObjectOptions { IfGenerationMatch = 0 } : null;
+
+			// Taken before the first attempt: the check below asks whether the object now in the bucket
+			// was created by this call, not by someone else before it.
+			DateTime startedUtc = DateTime.UtcNow;
+			bool resent = false;
 			try
 			{
 				// The whole upload is repeated on a transient failure (see WithRetry): the library retries
-				// the data request but not the one that opens the upload session.
-				WithRetry(() =>
+				// the data request but not the one that opens the upload session. resent records that the
+				// upload was repeated, so a later 412 can be told apart from someone else's object.
+				var gcsObject = Retry(() =>
 				{
-					var gcsObject = new Google.Apis.Storage.v1.Data.Object
+					var candidate = new Google.Apis.Storage.v1.Data.Object
 					{
 						Bucket = ssBucketName,
 						Name = ssObjectName,
 						ContentType = string.IsNullOrEmpty(ssContentType) ? null : ssContentType,
+						ContentDisposition = string.IsNullOrEmpty(ssContentDisposition) ? null : ssContentDisposition,
+						CacheControl = string.IsNullOrEmpty(ssCacheControl) ? null : ssCacheControl,
+						ContentEncoding = string.IsNullOrEmpty(ssContentEncoding) ? null : ssContentEncoding,
 						Metadata = metadata
 					};
 					using (var stream = new MemoryStream(content, false))
 					{
-						return storageClient.UploadObject(gcsObject, stream);
+						return storageClient.UploadObject(candidate, stream, uploadOptions);
 					}
-				});
+				}, IsTransient, e => resent = true);
+				ssGeneration = gcsObject.Generation ?? 0;
+			}
+			catch (Google.GoogleApiException e) when (e.HttpStatusCode == System.Net.HttpStatusCode.PreconditionFailed && ssOnlyIfNotExists)
+			{
+				// A 412 means an object with this name exists. When the upload was repeated after a lost
+				// response, that object may be the one this call stored: adopt it if it really is ours.
+				var ours = resent ? ObjectStoredByThisCall(storageClient, ssBucketName, ssObjectName, content, startedUtc) : null;
+				if (ours != null)
+				{
+					ssGeneration = ours.Generation ?? 0;
+					return;
+				}
+				throw new Exception("Object '" + SafeName(ssObjectName) + "' already exists in bucket '" + SafeName(ssBucketName) + "'. OnlyIfNotExists is True, so the existing object was left unchanged.", e);
 			}
 			catch (Exception e) when (IsTranslatable(e)) { throw TranslateException(e, auth, ssBucketName, null); }
 		} // MssObject_Upload
 
 		/// <summary>
+		/// After a repeated OnlyIfNotExists upload is answered 412: the object now in the bucket, when it is
+		/// the one this call stored, else null. If a send stored the object and its response was lost, the
+		/// repeat finds the name taken and is refused with 412 - the same answer someone else's object gives,
+		/// so the read here decides which it is. All three must match: the size, the MD5 (Google reports the
+		/// Base64 of the MD5, and the bytes are in memory), and a creation time no earlier than this call
+		/// (Google's clock can be up to a minute behind). Any failure of the read counts as "not ours", so a
+		/// 403 or a network error still gives the plain "already exists" error, as before 2.0.0.
+		/// </summary>
+		private static Google.Apis.Storage.v1.Data.Object ObjectStoredByThisCall(StorageClient storageClient, string bucketName, string objectName, byte[] content, DateTime startedUtc)
+		{
+			try
+			{
+				var existing = WithNetworkRetry(() => storageClient.GetObject(bucketName, objectName));
+				if (existing.Size != (ulong)content.Length) return null;
+				if (!string.Equals(existing.Md5Hash, Md5Base64(content), StringComparison.Ordinal)) return null;
+				return ParseTimestamp(existing.TimeCreatedRaw) >= startedUtc.AddMinutes(-1) ? existing : null;
+			}
+			catch (Exception e) when (IsTranslatable(e)) { return null; }
+		}
+
+		/// <summary>The Base64 MD5 of the bytes: the form Google reports in an object's md5Hash.</summary>
+		private static string Md5Base64(byte[] content)
+		{
+			using (var md5 = MD5.Create())
+				return Convert.ToBase64String(md5.ComputeHash(content));
+		}
+
+		/// <summary>
 		/// Downloads an object from a bucket.
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssObjectName"></param>
 		/// <param name="ssContent"></param>
@@ -2428,7 +2545,7 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 		/// Lists objects in a bucket with an optional prefix filter, with support for
 		/// pagination (MaxResults/PageToken) and folder-style navigation (Delimiter).
 		/// </summary>
-		/// <param name="ssAuthentication">Google Cloud credentials for this call. Leave AuthenticationMethod empty (or set &apos;ServiceAccountKey&apos;) to use ClientEmail + PrivateKey, or set &apos;WorkloadIdentityFederation&apos; for keyless access.</param>
+		/// <param name="ssAuthentication">Google Cloud credentials for this call. Set AuthenticationMethod to &apos;WorkloadIdentityFederation&apos; for keyless access, or &apos;ServiceAccountKey&apos; to use ClientEmail + PrivateKey. It is required.</param>
 		/// <param name="ssBucketName"></param>
 		/// <param name="ssPrefix"></param>
 		/// <param name="ssMaxResults">Maximum number of results for this call; 0 returns everything.</param>
@@ -2464,6 +2581,9 @@ namespace OutSystems.NssGoogleCloudStorage_ext
 							record.ssSTGCS_Object.ssName = obj.Name ?? "";
 							record.ssSTGCS_Object.ssSize = (long)Math.Min(obj.Size ?? 0, long.MaxValue);
 							record.ssSTGCS_Object.ssContentType = obj.ContentType ?? "";
+							record.ssSTGCS_Object.ssGeneration = obj.Generation ?? 0;
+							record.ssSTGCS_Object.ssMD5Hash = obj.Md5Hash ?? "";
+							record.ssSTGCS_Object.ssCrc32c = obj.Crc32c ?? "";
 							record.ssSTGCS_Object.ssUpdated = ParseTimestamp(obj.UpdatedRaw);
 							ssObjectList.Append(record);
 						}

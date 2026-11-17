@@ -2,6 +2,33 @@
 
 All notable changes to the Google Cloud Storage Connector for OutSystems 11 are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] - 2026-11-17
+
+Safer defaults and a few additions apps asked for. This release is breaking; see Migration.
+
+### Breaking
+
+- `AuthenticationMethod` is required. In 1.x the `GCS_Authentication` structure gave it the default value `ServiceAccountKey`, and an empty value also meant `ServiceAccountKey`. The default is removed, so a record that never sets the method is empty too, and an empty value is now rejected with "AuthenticationMethod is required. Set it to 'WorkloadIdentityFederation' or 'ServiceAccountKey'." before anything is sent. This stops an old key left in the record from being used when federation was meant.
+- `Bucket_Create` turns on uniform bucket-level access and enforces public access prevention on the buckets it creates. Before, it sent only the name and location, so Google's older defaults applied: per-object ACLs on, and public access left to the organization's policy. The new optional inputs `AllowFineGrainedAcl` and `AllowPublicAccess` turn them back off.
+- `Object_GetSignedUrl` with Workload Identity Federation accepts at most 720 minutes (12 hours). Google signs those URLs with a key it rotates and says it "may not remain valid after 12 hours", so a longer URL could stop working before it expired; 1.x only documented this. With a service account key the limit stays 7 days.
+
+### Added
+
+- `Object_Upload`:
+  - `OnlyIfNotExists` (optional Boolean): stores the object only if no object with that name exists, and otherwise fails with "Object '...' already exists in bucket '...'" and leaves the existing object unchanged. When a repeated attempt finds that its own earlier attempt had stored the object (same size and MD5, created during this call), the call succeeds instead of reporting it as existing.
+  - `ContentDisposition`, `CacheControl` and `ContentEncoding` (optional Text), set at upload time instead of with a second `Object_UpdateMetadata` call.
+  - `Generation` output: the version number Google gave the stored object.
+- `Bucket_Create`: optional `StorageClass` (STANDARD, NEARLINE, COLDLINE or ARCHIVE).
+- `GCS_Object` (the `Object_List` entries): `Generation`, `MD5Hash` and `Crc32c`, from the listing the action already gets, so no extra request.
+
+### Migration from 1.x
+
+1. Refresh the extension dependency in each consumer module. The new inputs are optional, so existing calls keep compiling.
+2. In the action or function that builds your `GCS_Authentication` record, set `AuthenticationMethod` to `ServiceAccountKey` unless it already sets a method. This includes records that never assigned it and relied on the structure's default. Records that already set a method need no change.
+3. If you rely on `Bucket_Create` making buckets that use per-object ACLs or can be made public, set `AllowFineGrainedAcl` or `AllowPublicAccess` to True on those calls. Buckets that already exist are not changed.
+4. With Workload Identity Federation, make sure `Object_GetSignedUrl` calls ask for 720 minutes or less.
+5. Republish the consumer modules.
+
 ## [1.7.6] - 2026-11-15
 
 The two items deferred from the review of 1.7.4. No action, input or output changes: a drop-in replacement for 1.7.5.
