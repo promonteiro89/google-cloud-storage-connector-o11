@@ -231,14 +231,14 @@ public static class SafetyTests
 
     private static void NameGuards()
     {
-        bool exists; byte[] bytes; string text; string token; long count;
+        bool exists; byte[] bytes; string text; string token; long count; long gen;
         RCGCS_ObjectMetadataRecord md; RLGCS_MetadataEntryRecordList custom;
         RLGCS_ObjectRecordList list; RLGCS_PrefixRecordList prefixes;
         var noMeta = new RLGCS_MetadataEntryRecordList();
         var data = new byte[] { 1 };
 
         Guard("Bucket_Exists empty BucketName", "BucketName", (e, a) => e.MssBucket_Exists(a, "", out exists));
-        Guard("Bucket_Create empty BucketName", "BucketName", (e, a) => e.MssBucket_Create(a, "", "EU"));
+        Guard("Bucket_Create empty BucketName", "BucketName", (e, a) => e.MssBucket_Create(a, "", "EU", "", false, false));
         Guard("Bucket_Delete empty BucketName", "BucketName", (e, a) => e.MssBucket_Delete(a, ""));
 
         Guard("Object_Delete empty BucketName", "BucketName", (e, a) => e.MssObject_Delete(a, "", "o"));
@@ -249,8 +249,8 @@ public static class SafetyTests
         Guard("Object_GetMetadata empty ObjectName", "ObjectName", (e, a) => e.MssObject_GetMetadata(a, "b", "", out exists, out md, out custom));
         Guard("Object_UpdateMetadata empty BucketName", "BucketName", (e, a) => e.MssObject_UpdateMetadata(a, "", "o", "text/plain", "", "", "", noMeta));
         Guard("Object_UpdateMetadata empty ObjectName", "ObjectName", (e, a) => e.MssObject_UpdateMetadata(a, "b", "", "text/plain", "", "", "", noMeta));
-        Guard("Object_Upload empty BucketName", "BucketName", (e, a) => e.MssObject_Upload(a, "", "o", data, "text/plain", noMeta));
-        Guard("Object_Upload empty ObjectName", "ObjectName", (e, a) => e.MssObject_Upload(a, "b", "", data, "text/plain", noMeta));
+        Guard("Object_Upload empty BucketName", "BucketName", (e, a) => e.MssObject_Upload(a, "", "o", data, "text/plain", noMeta, false, "", "", "", out gen));
+        Guard("Object_Upload empty ObjectName", "ObjectName", (e, a) => e.MssObject_Upload(a, "b", "", data, "text/plain", noMeta, false, "", "", "", out gen));
         Guard("Object_Download empty BucketName", "BucketName", (e, a) => e.MssObject_Download(a, "", "o", out bytes, out text));
         Guard("Object_Download empty ObjectName", "ObjectName", (e, a) => e.MssObject_Download(a, "b", "", out bytes, out text));
         Guard("Object_List empty BucketName", "BucketName", (e, a) => e.MssObject_List(a, "", "", 0, "", "", out list, out token, out prefixes));

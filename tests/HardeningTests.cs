@@ -146,6 +146,7 @@ public static class HardeningTests
     {
         var r = new RCGCS_AuthenticationRecord(null);
         r.ssSTGCS_Authentication.ssProjectId = "proj";
+        r.ssSTGCS_Authentication.ssAuthenticationMethod = "ServiceAccountKey";
         r.ssSTGCS_Authentication.ssClientEmail = email;
         r.ssSTGCS_Authentication.ssPrivateKey = pem;
         return r;
@@ -266,7 +267,7 @@ public static class HardeningTests
 
     private static void BucketNames(string email, string pem)
     {
-        bool exists; byte[] content; string contentType; string url; long deleted;
+        bool exists; byte[] content; string contentType; string url; long deleted; long generation;
         RLGCS_ObjectRecordList objects; string next; RLGCS_PrefixRecordList prefixes;
         var none = new RLGCS_MetadataEntryRecordList();
         string lineBreak = "my-bucket\nINJECTED: forged log line";
@@ -276,7 +277,7 @@ public static class HardeningTests
         var calls = new List<KeyValuePair<string, Action>>
         {
             new KeyValuePair<string, Action>("Object_Exists", () => Ext().MssObject_Exists(Auth(), lineBreak, "o", out exists)),
-            new KeyValuePair<string, Action>("Object_Upload", () => Ext().MssObject_Upload(Auth(), lineBreak, "o", new byte[1], "text/plain", none)),
+            new KeyValuePair<string, Action>("Object_Upload", () => Ext().MssObject_Upload(Auth(), lineBreak, "o", new byte[1], "text/plain", none, false, "", "", "", out generation)),
             new KeyValuePair<string, Action>("Object_Download", () => Ext().MssObject_Download(Auth(), lineBreak, "o", out content, out contentType)),
             new KeyValuePair<string, Action>("Object_Delete", () => Ext().MssObject_Delete(Auth(), lineBreak, "o")),
             new KeyValuePair<string, Action>("Object_List", () => Ext().MssObject_List(Auth(), lineBreak, "", 0, "", "", out objects, out next, out prefixes)),
@@ -286,7 +287,7 @@ public static class HardeningTests
             new KeyValuePair<string, Action>("Object_DeleteByPrefix", () => Ext().MssObject_DeleteByPrefix(Auth(), lineBreak, "p/", out deleted)),
             new KeyValuePair<string, Action>("Object_GetSignedUrl", () => Ext().MssObject_GetSignedUrl(Auth(), "Download", lineBreak, "o", 5, "", out url)),
             new KeyValuePair<string, Action>("Bucket_Exists", () => Ext().MssBucket_Exists(Auth(), lineBreak, out exists)),
-            new KeyValuePair<string, Action>("Bucket_Create", () => Ext().MssBucket_Create(Auth(), lineBreak, "EU")),
+            new KeyValuePair<string, Action>("Bucket_Create", () => Ext().MssBucket_Create(Auth(), lineBreak, "EU", "", false, false)),
             new KeyValuePair<string, Action>("Bucket_Delete", () => Ext().MssBucket_Delete(Auth(), lineBreak))
         };
         var failed = new List<string>();
@@ -331,7 +332,7 @@ public static class HardeningTests
 
     private static void ContentTypes(string email, string pem)
     {
-        string url;
+        string url; long generation;
         var none = new RLGCS_MetadataEntryRecordList();
         var backend = NewBackend(r => null);
         var bad = new[]
@@ -343,7 +344,7 @@ public static class HardeningTests
         };
         foreach (var item in bad)
         {
-            var ex = Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "o", new byte[1], item.Value, none));
+            var ex = Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "o", new byte[1], item.Value, none, false, "", "", "", out generation));
             TestLog.Check("Upload ContentType with " + item.Key + ": ArgumentException 'only printable ASCII'",
                 ex is ArgumentException && Has(ex.Message, "ContentType must contain only printable ASCII characters"), Detail(ex, null));
             url = null;
@@ -353,7 +354,7 @@ public static class HardeningTests
         }
         TestLog.Check("Upload ContentType checks send no request (not retried, not reported as a network error)", Total(backend) == 0, Detail(null, backend));
 
-        var breakEx = Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "o", new byte[1], "text/plain\r\nX-Evil: 1", none));
+        var breakEx = Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "o", new byte[1], "text/plain\r\nX-Evil: 1", none, false, "", "", "", out generation));
         TestLog.Check("Upload ContentType with a line break keeps the 1.7.4 message 'must not contain line breaks'",
             breakEx is ArgumentException && Has(breakEx.Message, "ContentType must not contain line breaks"), Detail(breakEx, null));
 
@@ -497,7 +498,7 @@ public static class HardeningTests
             if (IsBucketGet(r)) return Json(bucket(DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")));
             return null;
         });
-        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU"));
+        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU", "", false, false));
         TestLog.Check("Bucket_Create: a 503 then a 409, with the bucket created just now, counts as created (no error, 2 POSTs, 1 bucket GET)",
             ex == null && Count(backend, IsBucketCreate) == 2 && Count(backend, IsBucketGet) == 1, Detail(ex, backend));
 
@@ -508,7 +509,7 @@ public static class HardeningTests
             if (IsBucketGet(r)) return Json(bucket("2020-01-01T00:00:00.000Z"));
             return null;
         });
-        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU"));
+        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU", "", false, false));
         TestLog.Check("Bucket_Create: a 503 then a 409, with a bucket created in 2020, is a Conflict (it existed before this call)",
             ex != null && ex.Message.StartsWith("Conflict:", StringComparison.Ordinal), Detail(ex, backend));
 
@@ -523,7 +524,7 @@ public static class HardeningTests
                 if (IsBucketGet(r)) return Json(bucket(createdAt));
                 return null;
             });
-            ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU"));
+            ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU", "", false, false));
             if (secondsBefore > 60)
                 TestLog.Check("Bucket_Create: a 503 then a 409, with a bucket created 3 minutes before the call, is a Conflict",
                     ex != null && ex.Message.StartsWith("Conflict:", StringComparison.Ordinal), Detail(ex, backend));
@@ -539,7 +540,7 @@ public static class HardeningTests
             if (IsBucketGet(r)) return GoogleError(403, "Forbidden");
             return null;
         });
-        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU"));
+        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU", "", false, false));
         TestLog.Check("Bucket_Create: a 503 then a 409, with a bucket these credentials cannot read, is a Conflict (someone else's bucket)",
             ex != null && ex.Message.StartsWith("Conflict:", StringComparison.Ordinal), Detail(ex, backend));
 
@@ -549,7 +550,7 @@ public static class HardeningTests
             if (IsBucketGet(r)) return Json(bucket(DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")));
             return null;
         });
-        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU"));
+        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU", "", false, false));
         TestLog.Check("Bucket_Create: a 409 on the first send is a Conflict, without asking about the bucket (1 POST, 0 bucket GETs)",
             ex != null && ex.Message.StartsWith("Conflict:", StringComparison.Ordinal) && Count(backend, IsBucketCreate) == 1 && Count(backend, IsBucketGet) == 0, Detail(ex, backend));
 
@@ -560,13 +561,13 @@ public static class HardeningTests
             if (IsBucketGet(r)) return Json(bucket(DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")));
             return null;
         });
-        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU"));
+        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU", "", false, false));
         TestLog.Check("Bucket_Create: a 429 (refused) then a 409 is a Conflict, without asking about the bucket",
             ex != null && ex.Message.StartsWith("Conflict:", StringComparison.Ordinal) && Count(backend, IsBucketGet) == 0, Detail(ex, backend));
 
         creates = 0;
         backend = NewBackend(r => IsBucketCreate(r) ? (++creates == 1 ? GoogleError(503, "Service Unavailable") : Json(bucket("2026-01-01T00:00:00.000Z"))) : null);
-        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU"));
+        ex = Throws(() => Ext().MssBucket_Create(Auth(), "my-bucket", "EU", "", false, false));
         var posts = Where(backend, IsBucketCreate);
         TestLog.Check("Bucket_Create: a 503 then success creates the bucket (2 POSTs, both for project 'proj' with the name and location)",
             ex == null && posts.Count == 2 && posts.All(p => Query(p.Uri, "project") == "proj" && Has(p.Body, "\"name\":\"my-bucket\"") && Has(p.Body, "\"location\":\"EU\"")), Detail(ex, backend));
@@ -911,8 +912,9 @@ public static class HardeningTests
                 ex == null && content != null && content.SequenceEqual(data) && Count(backend, IsMedia) == 2, Detail(ex, backend));
 
             int starts = 0;
+            long generation;
             backend = NewBackend(r => IsSessionStart(r) && ++starts == 1 ? GoogleError(status, "transient") : null);
-            ex = Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "docs/u.bin", data, "text/plain", new RLGCS_MetadataEntryRecordList()));
+            ex = Throws(() => Ext().MssObject_Upload(Auth(), "my-bucket", "docs/u.bin", data, "text/plain", new RLGCS_MetadataEntryRecordList(), false, "", "", "", out generation));
             byte[] stored;
             lock (backend.StoredObjects) backend.StoredObjects.TryGetValue("my-bucket/docs/u.bin", out stored);
             TestLog.Check("Upload: one " + status + " on the request that opens the session is repeated and the bytes are stored",
