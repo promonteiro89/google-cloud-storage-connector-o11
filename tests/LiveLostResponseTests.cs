@@ -136,10 +136,12 @@ public static class LiveLostResponseTests
             // L1
             byte[] mine = Encoding.UTF8.GetBytes("lost response, CI " + Guid.NewGuid().ToString("N"));
             string n1 = prefix + "l1.txt"; created.Add(n1);
+            int dropped1 = -1, starts1 = -1, gets1 = -1;
             LostResponseInterceptor.Reset("drop-after-store");
             try
             {
                 ext.MssObject_Upload(auth, bucket, n1, mine, "text/plain", none, true, "", "", "", out generation);
+                dropped1 = LostResponseInterceptor.DroppedStored; starts1 = LostResponseInterceptor.SessionStarts; gets1 = LostResponseInterceptor.MetadataGets;
                 LostResponseInterceptor.Reset("pass");
                 STGCS_ObjectMetadataStructure m = Metadata(ext, auth, bucket, n1);
                 string md5 = Convert.ToBase64String(MD5.Create().ComputeHash(mine));
@@ -147,8 +149,7 @@ public static class LiveLostResponseTests
                     "returned " + generation + ", stored " + m.ssGeneration + ", md5 " + m.ssMD5Hash);
             }
             catch (Exception e) { TestLog.Check(L1, false, e.Message); }
-            TestLog.Check(L1b, LostResponseInterceptor.DroppedStored == 1 && LostResponseInterceptor.SessionStarts == 2 && LostResponseInterceptor.MetadataGets >= 1,
-                "dropped=" + LostResponseInterceptor.DroppedStored + " sessionStarts=" + LostResponseInterceptor.SessionStarts + " metadataGets=" + LostResponseInterceptor.MetadataGets);
+            TestLog.Check(L1b, dropped1 == 1 && starts1 == 2 && gets1 >= 1, "dropped=" + dropped1 + " sessionStarts=" + starts1 + " metadataGets=" + gets1);
 
             // L2: same length, different bytes, so the MD5 comparison decides.
             string n2 = prefix + "l2.txt"; created.Add(n2);
