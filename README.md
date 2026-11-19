@@ -345,6 +345,8 @@ Creates a bucket in the project given by `Authentication.ProjectId`.
 
 Since 2.0.0 new buckets are private and IAM-only by default. Before, the action sent only the name and location, so Google's older defaults applied. Buckets that already exist are not changed.
 
+An organization policy wins over these inputs. If your organization enforces uniform bucket-level access (`constraints/storage.uniformBucketLevelAccess`), `AllowFineGrainedAcl = True` makes Google refuse the bucket with a 412 that names the constraint. The same happens with `AllowPublicAccess = True` when public access prevention is enforced by policy.
+
 If the create request is repeated after a lost answer or a 5xx and Google then reports the name as taken, the action checks whether the bucket was created by the first request (it is readable and was created after the call started, allowing one minute for clock difference) and succeeds if so.
 
 #### `Bucket_Exists`
