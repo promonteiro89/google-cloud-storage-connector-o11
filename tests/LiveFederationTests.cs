@@ -103,7 +103,7 @@ public static class LiveFederationTests
     }
 
     /// <summary>Requests a GitHub Actions OIDC token whose audience is the workload identity provider.</summary>
-    private static string GetGitHubOidcToken(string requestUrl, string requestToken, string provider)
+    internal static string GetGitHubOidcToken(string requestUrl, string requestToken, string provider)
     {
         var normalize = typeof(CssGoogleCloudStorage_ext).GetMethod("NormalizeWorkloadIdentityProvider",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);

@@ -177,6 +177,8 @@ public static class GcsExtensionTestSuite
         {
             TestLog.Section("Live: Workload Identity Federation against real Google Cloud (GitHub OIDC)");
             LiveFederationTests.Run();
+            TestLog.Section("Live: lost upload response and OnlyIfNotExists recovery against real Google Cloud Storage");
+            LiveLostResponseTests.Run();
         }
         else
         {

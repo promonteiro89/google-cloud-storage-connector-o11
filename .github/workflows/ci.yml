@@ -88,6 +88,10 @@ jobs:
       GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
       GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      # Lost-response test: its own pool, service account and bucket (objects under E2E/ci/ only).
+      GCP_LIVE_WIF_PROVIDER: ${{ vars.GCP_LIVE_WIF_PROVIDER }}
+      GCP_LIVE_SERVICE_ACCOUNT: ${{ vars.GCP_LIVE_SERVICE_ACCOUNT }}
+      GCP_LIVE_BUCKET: ${{ vars.GCP_LIVE_BUCKET }}
       # Only whether the deploy key exists, never the key itself (see build-and-test).
       HAS_OS_DEPS_KEY: ${{ secrets.OS_DEPS_SSH_KEY != '' }}
     steps:
@@ -99,7 +103,7 @@ jobs:
         shell: powershell
         run: |
           # Fail loudly: without these the live tests would report SKIPPED, and a skipped live run must never look green.
-          $missing = @(@('GCP_WIF_PROVIDER', 'GCP_SERVICE_ACCOUNT', 'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN') |
+          $missing = @(@('GCP_WIF_PROVIDER', 'GCP_SERVICE_ACCOUNT', 'GCP_LIVE_WIF_PROVIDER', 'GCP_LIVE_SERVICE_ACCOUNT', 'GCP_LIVE_BUCKET', 'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN') |
             Where-Object { [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_)) })
           if ($env:HAS_OS_DEPS_KEY -ne 'true') { $missing += 'OS_DEPS_SSH_KEY' }
           if ($missing) {
@@ -128,6 +132,6 @@ jobs:
           msbuild Source\NET\GoogleCloudStorage_ext.csproj /p:Configuration=Release /v:minimal /nologo
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      - name: Live Workload Identity Federation tests (real Google Cloud)
+      - name: Live tests (real Google Cloud, federation and lost-response recovery)
         shell: powershell
         run: .\tests\run-tests.ps1 -Category Live
