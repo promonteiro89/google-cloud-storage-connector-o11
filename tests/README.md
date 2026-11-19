@@ -8,7 +8,7 @@ Tests every action of the extension. The default run needs no Google account or 
 - Offline tests (signed URLs, input validation, client caching) need no server: V4 signing is local RSA, done with a throwaway key generated on the first run.
 - Upload integrity tests drive `Object_Upload` through a fake of Google's resumable-upload endpoint that checks the `x-goog-hash` CRC32C the way the real server does.
 - Federation contract tests run Workload Identity Federation end to end against an in-process fake of every party: the identity provider's token endpoint, Google STS, IAM Credentials (`generateAccessToken` and `signBlob`) and Storage. The fake records every request, so the tests check the exact protocol. No network is used. The fake is plugged in through the extension's internal `HttpClientFactoryOverride` property, which is null unless a test sets it.
-- Live tests (`-Category Live`) run in GitHub Actions against real Google Cloud: the workflow's GitHub OIDC token is exchanged through Workload Identity Federation for a sandbox service account, and real Storage and `signBlob` are called.
+- Live tests (`-Category Live`) run in GitHub Actions against real Google Cloud: the workflow's GitHub OIDC token is exchanged through Workload Identity Federation for a service account, and real Storage and `signBlob` are called. The lost-response test also uploads real objects, through a handler that hides one of Google's answers from the extension.
 
 ## Running
 
@@ -60,6 +60,7 @@ Requirements:
 | 1.7.6 (fakes, [HardeningTests.cs](HardeningTests.cs), [Version2Tests.cs](Version2Tests.cs), [FederationTests.cs](FederationTests.cs)) | The key sign-in JWT and the `generateAccessToken` request carry exactly `devstorage.full_control`; `Object_DeleteByPrefix` sends LIST, the page's DELETEs, then the next LIST; a listing failure after deletes says "Deleted N object(s) ... then listing the next page failed", and one before any delete keeps the plain message and sends no DELETE |
 | 2.0.0 (fakes, [Version2Tests.cs](Version2Tests.cs)) | `Bucket_Create` sends uniform bucket-level access on and public access prevention `enforced` by default, the opposite with `AllowFineGrainedAcl` / `AllowPublicAccess`, an upper-cased `StorageClass`, and rejects an unknown class before any request; `Object_Upload` with `OnlyIfNotExists` sends `ifGenerationMatch=0`, reports an existing object exactly and leaves it unchanged, adopts its own lost first attempt only when size, MD5 and creation time match, sends the three content headers and rejects bad header values before any request, and returns the generation; `Object_List` fills `Generation`, `MD5Hash` and `Crc32c`; an empty, blank or unknown `AuthenticationMethod` is rejected before any request; a federated signed URL over 720 minutes is rejected and 720 is accepted, and a key keeps 10080. 15 lead mutants, 14 killed; the size check, redundant with the MD5 check, survives |
 | Federation live (CI) | Real Google Cloud through GitHub OIDC: Storage accepts the federated identity, and the signed URL's signature verifies against the service account's published certificates |
+| Lost response live (CI, [LiveLostResponseTests.cs](LiveLostResponseTests.cs)) | Real Google Cloud Storage: Google stores an `OnlyIfNotExists` upload whose answer is replaced by a 503, the extension retries, gets Google's real 412 and adopts its own object with Google's generation (1 dropped answer, 2 upload sessions, a metadata read); another writer's object of the same length gets "already exists" and is left unchanged; without `OnlyIfNotExists` the retry overwrites and returns the current generation |
 
 ## The live job
 
@@ -75,10 +76,16 @@ The live checks:
 - `Bucket_Exists` on a random, non-existent bucket returns `False`. A 404 means the chain worked; a broken chain gives 401 or 403.
 - `Object_GetSignedUrl` puts the service account in `X-Goog-Credential`, and the signature verifies against the service account's public certificates from `https://www.googleapis.com/service_accounts/v1/metadata/x509/{sa}`. The verifier rebuilds the V4 canonical request and string-to-sign from the URL and checks the RSA-SHA256 signature. The default run tests the verifier itself: a genuine URL verifies and a tampered one doesn't.
 
-When `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `GCP_WIF_PROVIDER` or `GCP_SERVICE_ACCOUNT` is missing, the live checks are reported as SKIPPED, never as passed. In CI, the "Check live configuration" step fails before that can happen, so a green `live-federation` job means the live checks ran.
+The lost-response checks (`LiveLostResponseTests.cs`) use their own Google Cloud setup, separate from the sandbox above:
+- a GitHub workload identity pool whose provider accepts only this repository's ID (`GCP_LIVE_WIF_PROVIDER`);
+- a service account with no keys (`GCP_LIVE_SERVICE_ACCOUNT`), whose only permission is Storage Object Admin on objects under `E2E/ci/` in the test bucket (`GCP_LIVE_BUCKET`), through an IAM condition.
+
+The extension's real Google HTTP stack is used, with one handler on top of the transport, plugged in through `HttpClientFactoryOverride`. In "drop" mode the handler lets Google complete the upload, answers the extension with 503 and fails that upload session from then on. The real retry delays are used. The test deletes its objects at the end, and each run uses a new `E2E/ci/lost-<time>-<id>/` prefix.
+
+When `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `GCP_WIF_PROVIDER`, `GCP_SERVICE_ACCOUNT` or one of the three `GCP_LIVE_*` variables is missing, the live checks are reported as SKIPPED, never as passed. In CI, the "Check live configuration" step fails before that can happen, so a green `live-federation` job means the live checks ran.
 
 ## Limits
 
 The harness loads the Google assemblies through a resolver that ignores versions, so it doesn't test the OutSystems runtime's own assembly binding. Only a call from a published app does.
 
-The harness files ([TestHarness.cs](TestHarness.cs), [FederationTests.cs](FederationTests.cs), [SafetyTests.cs](SafetyTests.cs), [RetryTests.cs](RetryTests.cs), [HardeningTests.cs](HardeningTests.cs), [LiveFederationTests.cs](LiveFederationTests.cs)) are compiled when the tests run, against the built extension DLL, and call the same `Mss*` methods the OutSystems platform calls.
+The harness files ([TestHarness.cs](TestHarness.cs), [FederationTests.cs](FederationTests.cs), [SafetyTests.cs](SafetyTests.cs), [RetryTests.cs](RetryTests.cs), [HardeningTests.cs](HardeningTests.cs), [LiveFederationTests.cs](LiveFederationTests.cs), [LiveLostResponseTests.cs](LiveLostResponseTests.cs)) are compiled when the tests run, against the built extension DLL, and call the same `Mss*` methods the OutSystems platform calls.
